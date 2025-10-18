@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState, useEffect } from "react";
 
 import { env, pipeline } from "@huggingface/transformers";
 env.allowLocalModels = false;
@@ -11,6 +11,8 @@ env.allowLocalModels = false;
 // Simple in-memory cache for the pipeline during the session
 let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+import Embedding3D from "./Embedding3D.jsx";
+import { computePCA } from "../utils/pca.js";
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
@@ -20,6 +22,9 @@ export default function ModelDemo() {
   const [text, setText] = useState(
     "Transformers are really cool for embeddings!"
   );
+  const [lastVector, setLastVector] = useState(null);
+  const [dataset, setDataset] = useState([]); // {text, vector: Float32Array}
+  const [pca, setPca] = useState(null); // {coords, components, explainedVariance}
 
   const abortRef = useRef(null);
 
@@ -82,6 +87,7 @@ export default function ModelDemo() {
         dims: dims.join("×"),
         preview,
       });
+      setLastVector(new Float32Array(data));
 
       setStatus("ready");
       setMessage("Done");
@@ -98,6 +104,41 @@ export default function ModelDemo() {
       setMessage("Cancelled");
     } catch {}
   }, []);
+
+  const addToDataset = useCallback(() => {
+    if (!lastVector) return;
+    setDataset((prev) => [...prev, { text, vector: lastVector }]);
+  }, [lastVector, text]);
+
+  const clearDataset = useCallback(() => {
+    setDataset([]);
+    setPca(null);
+  }, []);
+
+  // Recompute PCA when dataset changes
+  useEffect(() => {
+    if (dataset.length >= 3) {
+      try {
+        const res = computePCA(dataset.map((d) => d.vector), 3);
+        setPca(res);
+      } catch (e) {
+        console.error(e);
+        setPca(null);
+      }
+    } else {
+      setPca(null);
+    }
+  }, [dataset]);
+
+  const points3d = useMemo(() => {
+    if (!pca || !pca.coords) return [];
+    return pca.coords.map((c, i) => ({
+      x: c[0],
+      y: c[1],
+      z: c[2] ?? 0,
+      label: dataset[i]?.text?.slice(0, 24) || `#${i+1}`,
+    }));
+  }, [pca, dataset]);
 
   return (
     <div className="panel">
@@ -150,6 +191,37 @@ export default function ModelDemo() {
               … ]
             </code>
           </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn" onClick={addToDataset} disabled={!lastVector}>
+              Add point to dataset
+            </button>
+            <button className="btn" onClick={clearDataset} disabled={!dataset.length}>
+              Clear dataset ({dataset.length})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {dataset.length > 0 && (
+        <div className="result">
+          <div className="result__meta">
+            <span><strong>Dataset size:</strong> {dataset.length}</span>
+            {pca?.explainedVariance && pca.explainedVariance.length >= 3 && (
+              <span>
+                <strong>Explained:</strong> {pca.explainedVariance.slice(0,3).map((v,i)=> (v.toFixed(3) + (i<2?", ":"")))}
+              </span>
+            )}
+          </div>
+          {pca ? (
+            <Embedding3D
+              points={points3d}
+              width={640}
+              height={360}
+              title="PCA Projection (Top 3 PCs)"
+            />
+          ) : (
+            <div className="alert">Add at least 3 points to compute PCA.</div>
+          )}
         </div>
       )}
     </div>

@@ -1,44 +1,65 @@
 import React, { useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
-import { OrbitControls } from "@react-three/drei/core/OrbitControls";
-import { Html } from "@react-three/drei/web/Html";
+import { OrbitControls, Html, Line } from "@react-three/drei";
 
-function PointsCloud({ points }) {
-  const { positions, colors } = useMemo(() => {
-    if (!points?.length) return { positions: new Float32Array(), colors: new Float32Array() };
-    const pos = new Float32Array(points.length * 3);
-    const col = new Float32Array(points.length * 3);
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      pos[i * 3 + 0] = p.x;
-      pos[i * 3 + 1] = p.y;
-      pos[i * 3 + 2] = p.z;
-      const color = new THREE.Color(p.color || "#6ee7ff");
-      col[i * 3 + 0] = color.r;
-      col[i * 3 + 1] = color.g;
-      col[i * 3 + 2] = color.b;
+function VectorsCloud({ points }) {
+  const vectors = useMemo(() => {
+    const out = [];
+    for (const p of points || []) {
+      const end = new THREE.Vector3(p.x, p.y, p.z);
+      const len = end.length();
+      if (len < 1e-6) continue; // skip near-zero
+      const dir = end.clone().normalize();
+      const color = p.color || "#6ee7ff";
+      out.push({ end, dir, len, color, label: p.label });
     }
-    return { positions: pos, colors: col };
+    return out;
   }, [points]);
 
   return (
-    <points key={positions.length} frustumCulled={false}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
-        <bufferAttribute attach="attributes-color" count={colors.length / 3} array={colors} itemSize={3} />
-      </bufferGeometry>
-      <pointsMaterial vertexColors size={0.06} sizeAttenuation />
-    </points>
+    <group>
+      {vectors.map((v, i) => {
+        // Arrow head dimensions relative to vector length
+        const headLen = Math.max(0.04, Math.min(0.12, 0.08 * v.len));
+        const headRad = headLen * 0.4;
+        // Cone placement so that its tip sits exactly at the end point
+        const conePos = v.end.clone().addScaledVector(v.dir, -headLen * 0.5);
+        const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.dir);
+        return (
+          <group key={i}>
+            <Line
+              points={[[0, 0, 0], [v.end.x, v.end.y, v.end.z]]}
+              color={v.color}
+              lineWidth={2.5}
+              dashed={false}
+            />
+            <mesh position={conePos} quaternion={quat}>
+              <coneGeometry args={[headRad, headLen, 12]} />
+              <meshBasicMaterial color={v.color} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
   );
 }
 
 function Labels({ points }) {
   return (
     <group>
-      {points.map((p, i) => (
-        p.label ? (
-          <group key={i} position={[p.x, p.y, p.z]}>
+      {points.map((p, i) => {
+        if (!p.label) return null;
+        const len = Math.hypot(p.x, p.y, p.z);
+        const ox = len > 0 ? (p.x / len) : 0;
+        const oy = len > 0 ? (p.y / len) : 0;
+        const oz = len > 0 ? (p.z / len) : 0;
+        const offset = 0.06; // small world-unit offset beyond arrow tip
+        const px = p.x + ox * offset;
+        const py = p.y + oy * offset;
+        const pz = p.z + oz * offset;
+        return (
+          <group key={i} position={[px, py, pz]}>
             <Html center style={{ pointerEvents: "none" }}>
               <span style={{
                 background: "rgba(20,24,36,0.9)",
@@ -53,8 +74,8 @@ function Labels({ points }) {
               </span>
             </Html>
           </group>
-        ) : null
-      ))}
+        );
+      })}
     </group>
   );
 }
@@ -86,7 +107,7 @@ export default function Embedding3D({ points = [], width = 640, height = 360, ti
           <directionalLight position={[3, 2, 1]} intensity={0.6} />
           <gridHelper args={[4, 8, "#263145", "#1c263a"]} position={[0, -1.1, 0]} />
           <axesHelper args={[1.5]} />
-          <PointsCloud points={normalizedPoints} />
+          <VectorsCloud points={normalizedPoints} />
           <Labels points={normalizedPoints} />
           <OrbitControls enableDamping dampingFactor={0.08} rotateSpeed={0.6} zoomSpeed={0.8} />
         </Canvas>

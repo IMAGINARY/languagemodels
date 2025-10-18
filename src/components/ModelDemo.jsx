@@ -12,7 +12,8 @@ env.allowLocalModels = false;
 let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 import Embedding3D from "./Embedding3D.jsx";
-import { computePCA } from "../utils/pca.js";
+import PCAImport from "ml-pca";
+const PCAClass = PCAImport?.default ?? PCAImport;
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
@@ -119,8 +120,12 @@ export default function ModelDemo() {
   useEffect(() => {
     if (dataset.length >= 3) {
       try {
-        const res = computePCA(dataset.map((d) => d.vector), 3);
-        setPca(res);
+        const X = dataset.map((d) => Array.from(d.vector));
+        const p = new PCAClass(X, { center: true, scale: false });
+        const proj = p.predict(X, { nComponents: 3 });
+        const coords = proj.to2DArray ? proj.to2DArray() : proj;
+        const explainedVariance = p.getExplainedVariance();
+        setPca({ coords, explainedVariance });
       } catch (e) {
         console.error(e);
         setPca(null);
@@ -133,10 +138,10 @@ export default function ModelDemo() {
   const points3d = useMemo(() => {
     if (!pca || !pca.coords) return [];
     return pca.coords.map((c, i) => ({
-      x: c[0],
-      y: c[1],
+      x: c[0] ?? 0,
+      y: c[1] ?? 0,
       z: c[2] ?? 0,
-      label: dataset[i]?.text?.slice(0, 24) || `#${i+1}`,
+      label: dataset[i]?.text?.slice(0, 24) || `#${i + 1}`,
     }));
   }, [pca, dataset]);
 
@@ -208,7 +213,7 @@ export default function ModelDemo() {
             <span><strong>Dataset size:</strong> {dataset.length}</span>
             {pca?.explainedVariance && pca.explainedVariance.length >= 3 && (
               <span>
-                <strong>Explained:</strong> {pca.explainedVariance.slice(0,3).map((v,i)=> (v.toFixed(3) + (i<2?", ":"")))}
+                <strong>Explained:</strong> {pca.explainedVariance.slice(0, 3).map((v, i) => (v.toFixed(3) + (i < 2 ? ", " : "")))}
               </span>
             )}
           </div>

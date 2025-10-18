@@ -1,124 +1,96 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import * as THREE from "three";
+import { useEffect, useMemo, useRef } from "react";
+import { OrbitControls as ThreeOrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-// Simple interactive 3D scatter using a canvas. No external deps.
-export default function Embedding3D({ points = [], width = 640, height = 360, title = "Embedding PCA (3D)" }) {
-  const canvasRef = useRef(null);
-  const [drag, setDrag] = useState(null); // {x,y}
-  const [angles, setAngles] = useState({ yaw: 0.6, pitch: 0.2 }); // radians
-  const [scale, setScale] = useState(1);
+function OrbitControls() {
+  const { camera, gl } = useThree();
+  const controlsRef = useRef();
+  useEffect(() => {
+    controlsRef.current = new ThreeOrbitControls(camera, gl.domElement);
+    controlsRef.current.enableDamping = true;
+    controlsRef.current.dampingFactor = 0.08;
+    controlsRef.current.rotateSpeed = 0.6;
+    controlsRef.current.zoomSpeed = 0.8;
+    return () => controlsRef.current?.dispose();
+  }, [camera, gl]);
+  useFrame(() => controlsRef.current?.update());
+  return null;
+}
 
-  // Normalize points to unit sphere for stable view
-  const normalized = useMemo(() => {
-    if (!points.length) return [];
+function PointsCloud({ points }) {
+  const geometryRef = useRef();
+  const { positions, colors } = useMemo(() => {
+    if (!points?.length) return { positions: new Float32Array(), colors: new Float32Array() };
+    // Normalize to unit sphere for tight framing
     let maxR = 1e-6;
     for (const p of points) {
-      const r = Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+      const r = Math.hypot(p.x, p.y, p.z);
       if (r > maxR) maxR = r;
     }
-    const s = 1 / maxR;
-    setScale(maxR);
-    return points.map((p) => ({ ...p, x: p.x * s, y: p.y * s, z: p.z * s }));
+    const s = maxR > 0 ? 1 / maxR : 1;
+    const pos = new Float32Array(points.length * 3);
+    const col = new Float32Array(points.length * 3);
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      pos[i * 3 + 0] = p.x * s;
+      pos[i * 3 + 1] = p.y * s;
+      pos[i * 3 + 2] = p.z * s;
+      const color = new THREE.Color(p.color || "#6ee7ff");
+      col[i * 3 + 0] = color.r;
+      col[i * 3 + 1] = color.g;
+      col[i * 3 + 2] = color.b;
+    }
+    return { positions: pos, colors: col };
   }, [points]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const w = canvas.width, h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
+  return (
+    <points>
+      <bufferGeometry ref={geometryRef}>
+        <bufferAttribute
+          attach="attributes-position"
+          count={positions.length / 3}
+          array={positions}
+          itemSize={3}
+        />
+        <bufferAttribute
+          attach="attributes-color"
+          count={colors.length / 3}
+          array={colors}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial vertexColors size={0.06} sizeAttenuation />
+    </points>
+  );
+}
 
-    // Camera params
-    const yaw = angles.yaw, pitch = angles.pitch;
-    const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
-    const cosP = Math.cos(pitch), sinP = Math.sin(pitch);
-    const camDist = 2.5; // distance from origin
-    const f = 400; // focal length in px
-
-    // Draw axes (optional)
-    function project(pt) {
-      // rotate Y (yaw), then X (pitch)
-      const x1 = cosY * pt.x + sinY * pt.z;
-      const z1 = -sinY * pt.x + cosY * pt.z;
-      const y1 = cosP * pt.y - sinP * z1;
-      const z2 = sinP * pt.y + cosP * z1 + camDist; // translate camera
-      const s = f / (z2 <= 0.1 ? 0.1 : z2);
-      return { X: w / 2 + x1 * s, Y: h / 2 - y1 * s, depth: z2, scale: s };
-    }
-
-    // Sort by depth for painter's algorithm (farther first)
-    const proj = normalized.map((p, i) => ({ i, p, pr: project(p) }));
-    proj.sort((a, b) => b.pr.depth - a.pr.depth);
-
-    // Background
-    ctx.fillStyle = "#0b0d16";
-    ctx.fillRect(0, 0, w, h);
-
-    // Draw points
-    for (const { i, p, pr } of proj) {
-      const r = Math.max(2, Math.min(8, 4 * pr.scale));
-      ctx.beginPath();
-      ctx.arc(pr.X, pr.Y, r, 0, Math.PI * 2);
-      ctx.closePath();
-      ctx.fillStyle = p.color || "#6ee7ff";
-      ctx.fill();
-    }
-
-    // Optional labels (only when few points)
-    if (proj.length <= 50) {
-      ctx.font = "12px system-ui, sans-serif";
-      ctx.fillStyle = "#cdd3e4";
-      for (const { p, pr } of proj) {
-        if (!p.label) continue;
-        ctx.fillText(p.label, pr.X + 6, pr.Y - 6);
-      }
-    }
-  }, [normalized, angles]);
-
-  function onMouseDown(e) {
-    setDrag({ x: e.clientX, y: e.clientY, orig: { ...angles } });
-  }
-  function onMouseMove(e) {
-    if (!drag) return;
-    const dx = e.clientX - drag.x;
-    const dy = e.clientY - drag.y;
-    const sens = 0.005;
-    setAngles({ yaw: drag.orig.yaw + dx * sens, pitch: drag.orig.pitch + dy * sens });
-  }
-  function onMouseUp() { setDrag(null); }
-  function onWheel(e) {
-    e.preventDefault();
-    const delta = Math.sign(e.deltaY);
-    // Adjust focal length by scaling width/height in drawing effect
-    // here, change normalization slightly (zoom)
-    const s = Math.max(0.5, Math.min(5, (1 + -delta * 0.1)));
-    // We simulate zoom by scaling normalized points; easiest is to tweak css size
-    // but we keep it simple: change canvas size slightly for feedback
-    // Left as no-op to keep behavior stable.
-  }
-
+export default function Embedding3D({ points = [], width = 640, height = 360, title = "Embedding PCA (3D)" }) {
   return (
     <div className="viz3d" style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
         <h3 style={{ margin: 0, fontSize: 14 }}>{title}</h3>
         <span style={{ color: "#a0a7b5", fontSize: 12 }}>
-          {points.length ? `${points.length} points (scaled, r≈${scale.toFixed(2)})` : "no points"}
+          {points.length ? `${points.length} points` : "no points"}
         </span>
       </div>
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        style={{ width: "100%", height: height, background: "#0b0d16", borderRadius: 10, border: "1px solid #262b3a", cursor: drag ? "grabbing" : "grab" }}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        onWheel={onWheel}
-      />
+      <div style={{ width: "100%", height }}>
+        <Canvas
+          camera={{ position: [1.8, 1.2, 1.8], fov: 50 }}
+          gl={{ antialias: true }}
+        >
+          <color attach="background" args={["#0b0d16"]} />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[3, 2, 1]} intensity={0.6} />
+          <gridHelper args={[4, 8, "#263145", "#1c263a"]} position={[0, -1.1, 0]} />
+          <axesHelper args={[1.5]} />
+          <PointsCloud points={points} />
+          <OrbitControls />
+        </Canvas>
+      </div>
       <div style={{ display: "flex", gap: 8, color: "#a0a7b5" }}>
-        <span>Drag to rotate</span>
+        <span>Drag to orbit, wheel to zoom</span>
       </div>
     </div>
   );
 }
-

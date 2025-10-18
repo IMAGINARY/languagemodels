@@ -6,13 +6,11 @@ env.allowLocalModels = false;
 // If models load html files instead of json/binary, this is likely due to the bundler vite.
 // Open devtools, Application, Cache Storage, transformersjs-cache, and delete it to fix.
 
-//TODO: implement local models
+// TODO: optional: add a local/offline mode in a separate component
 
 // Simple in-memory cache for the pipeline during the session
 let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
-
-const logPrefix = "[transformers-demo]";
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
@@ -22,7 +20,7 @@ export default function ModelDemo() {
   const [text, setText] = useState(
     "Transformers are really cool for embeddings!"
   );
-  const [events, setEvents] = useState([]);
+
   const abortRef = useRef(null);
 
   const canRun = useMemo(
@@ -35,37 +33,23 @@ export default function ModelDemo() {
       setError(null);
       setStatus("loading");
       setMessage("Loading model (first time may take a while) …");
-      setEvents((e) =>
-        [{ t: Date.now(), m: "init loadModel" }, ...e].slice(0, 500)
-      );
-      console.log(logPrefix, "loadModel: start");
 
       // Model: Small sentence embedding model
       // Note: transformers.js caches model files in IndexedDB by default
       extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
         revision: "main",
         progress_callback: (p) => {
-          setEvents((e) =>
-            [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
-          );
           if (p?.status && p?.name) {
             setMessage(`${p.status}: ${p.name}`);
           }
-          // Also log to console for Network tab correlation
-          console.log(logPrefix, "progress", p);
         },
       });
 
       setStatus("ready");
       setMessage("Model ready");
-      console.log(logPrefix, "loadModel: ready");
     } catch (e) {
-      console.error(e);
       setStatus("error");
       setError("Failed to load model. Check console for details.");
-      setEvents((ev) =>
-        [{ t: Date.now(), m: `error: ${e?.message || e}` }, ...ev].slice(0, 50)
-      );
     }
   }, []);
 
@@ -76,44 +60,11 @@ export default function ModelDemo() {
       setMessage("Computing embedding …");
 
       if (!extractor) {
-        // Lazy-load if user skips the explicit load step
-        const checks = await verifyLocalModel();
-        const missing = checks.filter((c) => !c.ok && !c.optional);
-        if (missing.length) {
-          const lines = missing.map(
-            (m) => `missing or invalid (${m.status} ${m.ct || ""}): ${m.url}`
-          );
-          const msg = `Local model files not found or invalid.\n- ${lines.join(
-            "\n- "
-          )}`;
-          console.error(logPrefix, msg);
-          setStatus("error");
-          setError(msg);
-          setMessage("Local model missing");
-          setEvents((e) => [{ t: Date.now(), m: msg }, ...e].slice(0, 50));
-          return;
-        }
-        const missingOptional = checks.filter((c) => !c.ok && c.optional);
-        if (missingOptional.length) {
-          const lines = missingOptional.map(
-            (m) => `optional missing (${m.status} ${m.ct || ""}): ${m.url}`
-          );
-          setEvents((e) =>
-            [{ t: Date.now(), m: lines.join("\n") }, ...e].slice(0, 50)
-          );
-        }
-        const { pipeline } = await getTransformers();
+        // Lazy-load if user skips the explicit load step (remote)
         extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
           revision: "main",
-          local_files_only: true,
           progress_callback: (p) => {
-            setEvents((e) =>
-              [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
-            );
-            if (p?.status && p?.name) {
-              setMessage(`${p.status}: ${p.name}`);
-            }
-            console.log(logPrefix, "progress", p);
+            if (p?.status && p?.name) setMessage(`${p.status}: ${p.name}`);
           },
         });
       }
@@ -135,12 +86,8 @@ export default function ModelDemo() {
       setStatus("ready");
       setMessage("Done");
     } catch (e) {
-      console.error(e);
       setStatus("error");
       setError("Failed to compute embedding. Check console for details.");
-      setEvents((ev) =>
-        [{ t: Date.now(), m: `error: ${e?.message || e}` }, ...ev].slice(0, 50)
-      );
     }
   }, [text]);
 
@@ -201,24 +148,6 @@ export default function ModelDemo() {
                 </span>
               ))}{" "}
               … ]
-            </code>
-          </div>
-        </div>
-      )}
-
-      {events.length > 0 && (
-        <div className="result">
-          <div className="result__meta">
-            <strong>Events</strong>
-            <span className="status">(latest first)</span>
-          </div>
-          <div className="result__preview">
-            <code>
-              {events.slice(0, 8).map((e, i) => (
-                <div key={i}>
-                  • {new Date(e.t).toLocaleTimeString()} — {e.m}
-                </div>
-              ))}
             </code>
           </div>
         </div>

@@ -1,10 +1,10 @@
 # AI Exhibits — Word Embeddings (transformers.js + React)
 
-An educational web app that demonstrates core LLM concepts directly in the browser. It uses React for the UI and [`@xenova/transformers`](https://github.com/xenova/transformers.js) to run inference client‑side (no server required). The initial exhibit shows sentence embeddings using the `Xenova/all-MiniLM-L6-v2` model.
+An educational web app that demonstrates core LLM concepts directly in the browser. It uses React for the UI and [`@huggingface/transformers`](https://github.com/huggingface/transformers.js) to run inference client‑side (no server required). The initial exhibit shows sentence embeddings using the `Xenova/all-MiniLM-L6-v2` model.
 
 ## Features
 
-- Client‑side inference with `@xenova/transformers`
+- Client‑side inference with `@huggingface/transformers`
 - React UI with a ready‑to‑extend structure
 - Minimal Vite setup for fast dev
 
@@ -32,13 +32,13 @@ Notes:
 
 This project can run fully offline. Do this once while online:
 
-1) Ensure ONNX runtime assets are available locally
+1) Ensure ONNX runtime assets are available locally (optional)
 
-- This repo copies `@xenova/transformers/dist` into `public/transformers/` on `npm install` via a `postinstall` script. If needed, run:
+- Remote mode requires no action. If you plan to host the ONNX runtime files locally for offline use, copy the runtime assets manually:
 
   ```bash
-  npm install
-  npm run dev   # verifies public/transformers exists
+  mkdir -p public/transformers
+  cp -R node_modules/@huggingface/transformers/dist/* public/transformers/
   ```
 
 2) Download the model files and place them under `public/models/`

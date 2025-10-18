@@ -1,124 +1,18 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 
+import { env, pipeline } from "@huggingface/transformers";
+env.allowLocalModels = false;
+// See bug at: https://github.com/huggingface/transformers.js/issues/366#event-1351036909
+// If models load html files instead of json/binary, this is likely due to the bundler vite.
+// Open devtools, Application, Cache Storage, transformersjs-cache, and delete it to fix.
+
+//TODO: implement local models
+
 // Simple in-memory cache for the pipeline during the session
 let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 
 const logPrefix = "[transformers-demo]";
-
-// As a safety net, intercept all fetches and redirect any relative
-// '/Xenova/...' paths to our local '/models/Xenova/...' mirror.
-if (typeof window !== 'undefined' && !window.__xfetchPatched) {
-  const originalFetch = window.fetch.bind(window);
-  window.fetch = async (input, init) => {
-    let inputUrl = typeof input === 'string' ? input : (input?.url || '');
-    let url;
-    try { url = new URL(inputUrl, window.location.origin); } catch { url = null; }
-
-    // Build list of candidate URLs to try if the first returns HTML/404
-    const candidates = [];
-    if (url) {
-      // Default
-      candidates.push(url.toString());
-
-      // If transformers requested '/Xenova/...', rewrite to local mirror under '/models'
-      if (url.origin === window.location.origin && url.pathname.startsWith('/Xenova/')) {
-        const local = new URL(url.toString());
-        local.pathname = url.pathname.replace(/^\/Xenova\//, '/models/Xenova/');
-        candidates.unshift(local.toString()); // prefer local mirror first
-      }
-
-      // If a local model path without '/resolve/main', add a candidate with it
-      if (url.origin === window.location.origin && url.pathname.startsWith('/models/Xenova/') && !url.pathname.includes('/resolve/main/')) {
-        const withResolve = new URL(url.toString());
-        withResolve.pathname = withResolve.pathname.replace('/models/Xenova/', '/models/Xenova/').replace(/^(.*?\/Xenova\/[^/]+\/)/, '$1resolve/main/');
-        candidates.push(withResolve.toString());
-
-        // If requesting quantized model, also try non-quantized filename
-        if (/\/onnx\/model_quantized\.onnx$/i.test(withResolve.pathname)) {
-          const nonq = new URL(withResolve.toString());
-          nonq.pathname = nonq.pathname.replace('model_quantized.onnx', 'model.onnx');
-          candidates.push(nonq.toString());
-        }
-      }
-    } else {
-      candidates.push(inputUrl || String(input));
-    }
-
-    // Try candidates in order until we get a non-HTML successful response
-    for (let i = 0; i < candidates.length; i++) {
-      const finalUrl = candidates[i];
-      console.log(logPrefix, i === 0 ? 'fetch (win) ->' : 'fetch (win,alt) ->', finalUrl);
-      const res = await originalFetch(finalUrl, init);
-      const ct = res.headers.get('content-type') || '';
-      console.log(logPrefix, 'fetch (win) <-', res.status, ct, 'for', finalUrl);
-      const isHtml = /text\/html/i.test(ct);
-      const isOk = res.ok && !isHtml;
-      if (isOk) return res;
-      // If last candidate, consider JSON stubs
-      const isJson = /\.json($|\?)/i.test(finalUrl);
-      const isLocalModelsJson = finalUrl.includes('/models/Xenova/') && isJson;
-      if (i === candidates.length - 1 && isLocalModelsJson) {
-        const text = await res.clone().text().catch(() => '');
-        if (!res.ok || isHtml || /^\s*<!doctype/i.test(text) || text.trim() === '') {
-          console.log(logPrefix, 'stub JSON served for', finalUrl);
-          return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
-        }
-      }
-      // Otherwise continue to next candidate
-    }
-
-    // Fallback: last fetch
-    const last = candidates[candidates.length - 1];
-    return originalFetch(last, init);
-  };
-  window.__xfetchPatched = true;
-}
-
-// Dynamically import transformers after fetch is patched so our overrides apply
-let TF = null;
-async function getTransformers() {
-  if (!TF) {
-    TF = await import("@xenova/transformers");
-    const { env } = TF;
-    // Offline-first: serve ONNX runtime and models locally
-    env.allowLocalModels = true;
-    env.localModelPath = "/models"; // served from public/models
-    env.backends.onnx.wasm.wasmPaths = "/transformers/"; // served from public/transformers
-    env.backends.onnx.wasm.numThreads = 1;
-    env.backends.onnx.wasm.proxy = false; // keep in main thread for simplicity/offline
-    // Avoid using any previously cached (possibly bad) files
-    env.useBrowserCache = false;
-
-    // Log each fetch to aid debugging
-    const origEnvFetch = typeof env.fetch === 'function' ? env.fetch : fetch.bind(window);
-    env.fetch = async (url, options) => {
-      let u = url;
-      if (typeof u === 'string' && !/^https?:\/\//i.test(u)) {
-        // Map any Xenova path to our local models mirror
-        if (u.startsWith('/Xenova/')) {
-          u = u.replace(/^\/Xenova\//, '/models/Xenova/');
-        } else if (u.startsWith('Xenova/')) {
-          u = '/models/' + u;
-        } else if (u.includes('Xenova/')) {
-          u = '/models/' + u.slice(u.indexOf('Xenova/'));
-        }
-      }
-      console.log(logPrefix, 'fetch (env) ->', u);
-      const res = await origEnvFetch(u, options);
-      console.log(
-        logPrefix,
-        "fetch (env) <-",
-        res.status,
-        res.headers.get("content-type"),
-        "for",
-        u
-      );
-      return res;
-    };
-  }
-  return TF;
-}
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
@@ -136,34 +30,6 @@ export default function ModelDemo() {
     [status]
   );
 
-  const verifyLocalModel = useCallback(async () => {
-    const base = `/models/${LOCAL_MODEL_ID}/resolve/main`;
-    const required = [
-      `${base}/config.json`,
-      `${base}/tokenizer.json`,
-      `${base}/tokenizer_config.json`,
-      `${base}/onnx/model.onnx`,
-    ];
-    const optional = [
-      `${base}/special_tokens_map.json`,
-      `${base}/preprocessor_config.json`,
-    ];
-    const results = [];
-    for (const url of [...required, ...optional]) {
-      try {
-        const res = await fetch(url, { method: 'GET' });
-        const ct = res.headers.get('content-type') || '';
-        const ok = res.ok && !/text\/html/i.test(ct);
-        const isOptional = optional.includes(url);
-        results.push({ url, ok, status: res.status, ct, optional: isOptional });
-      } catch (e) {
-        const isOptional = optional.includes(url);
-        results.push({ url, ok: false, status: 0, ct: '', err: String(e), optional: isOptional });
-      }
-    }
-    return results;
-  }, []);
-
   const loadModel = useCallback(async () => {
     try {
       setError(null);
@@ -174,50 +40,21 @@ export default function ModelDemo() {
       );
       console.log(logPrefix, "loadModel: start");
 
-      // Verify local files exist before attempting pipeline
-      const checks = await verifyLocalModel();
-      const missing = checks.filter((c) => !c.ok && !c.optional);
-      if (missing.length) {
-        const lines = missing.map(
-          (m) => `missing or invalid (${m.status} ${m.ct || ''}): ${m.url}`
-        );
-        const msg = `Local model files not found or invalid.\n- ${lines.join('\n- ')}`;
-        console.error(logPrefix, msg);
-        setStatus('error');
-        setError(msg);
-        setMessage('Local model missing');
-        setEvents((e) => [{ t: Date.now(), m: msg }, ...e].slice(0, 50));
-        return;
-      }
-      const missingOptional = checks.filter((c) => !c.ok && c.optional);
-      if (missingOptional.length) {
-        const lines = missingOptional.map(
-          (m) => `optional missing (${m.status} ${m.ct || ''}): ${m.url}`
-        );
-        setEvents((e) => [{ t: Date.now(), m: lines.join('\n') }, ...e].slice(0, 50));
-      }
-
       // Model: Small sentence embedding model
       // Note: transformers.js caches model files in IndexedDB by default
-      const { pipeline } = await getTransformers();
-      extractor = await pipeline(
-        "feature-extraction",
-        LOCAL_MODEL_ID,
-        {
-          revision: 'main',
-          local_files_only: true,
-          progress_callback: (p) => {
-            setEvents((e) =>
-              [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
-            );
-            if (p?.status && p?.name) {
-              setMessage(`${p.status}: ${p.name}`);
-            }
-            // Also log to console for Network tab correlation
-            console.log(logPrefix, "progress", p);
-          },
-        }
-      );
+      extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
+        revision: "main",
+        progress_callback: (p) => {
+          setEvents((e) =>
+            [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
+          );
+          if (p?.status && p?.name) {
+            setMessage(`${p.status}: ${p.name}`);
+          }
+          // Also log to console for Network tab correlation
+          console.log(logPrefix, "progress", p);
+        },
+      });
 
       setStatus("ready");
       setMessage("Model ready");
@@ -244,41 +81,41 @@ export default function ModelDemo() {
         const missing = checks.filter((c) => !c.ok && !c.optional);
         if (missing.length) {
           const lines = missing.map(
-            (m) => `missing or invalid (${m.status} ${m.ct || ''}): ${m.url}`
+            (m) => `missing or invalid (${m.status} ${m.ct || ""}): ${m.url}`
           );
-          const msg = `Local model files not found or invalid.\n- ${lines.join('\n- ')}`;
+          const msg = `Local model files not found or invalid.\n- ${lines.join(
+            "\n- "
+          )}`;
           console.error(logPrefix, msg);
-          setStatus('error');
+          setStatus("error");
           setError(msg);
-          setMessage('Local model missing');
+          setMessage("Local model missing");
           setEvents((e) => [{ t: Date.now(), m: msg }, ...e].slice(0, 50));
           return;
         }
         const missingOptional = checks.filter((c) => !c.ok && c.optional);
         if (missingOptional.length) {
           const lines = missingOptional.map(
-            (m) => `optional missing (${m.status} ${m.ct || ''}): ${m.url}`
+            (m) => `optional missing (${m.status} ${m.ct || ""}): ${m.url}`
           );
-          setEvents((e) => [{ t: Date.now(), m: lines.join('\n') }, ...e].slice(0, 50));
+          setEvents((e) =>
+            [{ t: Date.now(), m: lines.join("\n") }, ...e].slice(0, 50)
+          );
         }
         const { pipeline } = await getTransformers();
-        extractor = await pipeline(
-          "feature-extraction",
-          LOCAL_MODEL_ID,
-          {
-            revision: 'main',
-            local_files_only: true,
-            progress_callback: (p) => {
-              setEvents((e) =>
-                [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
-              );
-              if (p?.status && p?.name) {
-                setMessage(`${p.status}: ${p.name}`);
-              }
-              console.log(logPrefix, "progress", p);
-            },
-          }
-        );
+        extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
+          revision: "main",
+          local_files_only: true,
+          progress_callback: (p) => {
+            setEvents((e) =>
+              [{ t: Date.now(), m: JSON.stringify(p) }, ...e].slice(0, 50)
+            );
+            if (p?.status && p?.name) {
+              setMessage(`${p.status}: ${p.name}`);
+            }
+            console.log(logPrefix, "progress", p);
+          },
+        });
       }
 
       const output = await extractor(text, {

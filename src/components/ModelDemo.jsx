@@ -12,8 +12,7 @@ env.allowLocalModels = false;
 let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 import Embedding3D from "./Embedding3D.jsx";
-import PCAImport from "ml-pca";
-const PCAClass = PCAImport?.default ?? PCAImport;
+import { PCA as PCAClass } from "ml-pca";
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");

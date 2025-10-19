@@ -55,6 +55,9 @@ h1 { margin: 0; font-size: 22px; }
 .row { display: flex; gap: 10px; align-items: center; }
 .row--actions { justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
 
+/* Simple menu list on the landing page */
+.menu { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+
 .input {
   width: 100%;
   background: var(--panel);
@@ -98,4 +101,3 @@ h1 { margin: 0; font-size: 22px; }
   align-items: center;
   color: var(--muted);
 }
-

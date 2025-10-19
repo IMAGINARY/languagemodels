@@ -1,4 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+} from "react";
 
 import { env, pipeline } from "@huggingface/transformers";
 env.allowLocalModels = false;
@@ -115,6 +121,15 @@ export default function ModelDemo() {
     setPca(null);
   }, []);
 
+  window.showDataset = () => {
+    console.table(
+      dataset.map((d, i) => ({
+        "#": i + 1,
+        text: d.text,
+        vector: d.vector,
+      }))
+    );
+  };
   // Recompute PCA when dataset changes
   useEffect(() => {
     if (dataset.length >= 3) {
@@ -144,6 +159,17 @@ export default function ModelDemo() {
     }));
   }, [pca, dataset]);
 
+  window.showPoints3d = () => {
+    console.table(
+      points3d.map((p) => ({
+        label: p.label,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        length: Math.hypot(p.x, p.y, p.z),
+      }))
+    );
+  };
   return (
     <div className="panel">
       <div className="row">
@@ -196,10 +222,18 @@ export default function ModelDemo() {
             </code>
           </div>
           <div className="row" style={{ marginTop: 8 }}>
-            <button className="btn" onClick={addToDataset} disabled={!lastVector}>
+            <button
+              className="btn"
+              onClick={addToDataset}
+              disabled={!lastVector}
+            >
               Add point to dataset
             </button>
-            <button className="btn" onClick={clearDataset} disabled={!dataset.length}>
+            <button
+              className="btn"
+              onClick={clearDataset}
+              disabled={!dataset.length}
+            >
               Clear dataset ({dataset.length})
             </button>
           </div>
@@ -209,10 +243,15 @@ export default function ModelDemo() {
       {dataset.length > 0 && (
         <div className="result">
           <div className="result__meta">
-            <span><strong>Dataset size:</strong> {dataset.length}</span>
+            <span>
+              <strong>Dataset size:</strong> {dataset.length}
+            </span>
             {pca?.explainedVariance && pca.explainedVariance.length >= 3 && (
               <span>
-                <strong>Explained:</strong> {pca.explainedVariance.slice(0, 3).map((v, i) => (v.toFixed(3) + (i < 2 ? ", " : "")))}
+                <strong>Explained:</strong>{" "}
+                {pca.explainedVariance
+                  .slice(0, 3)
+                  .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))}
               </span>
             )}
           </div>

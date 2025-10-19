@@ -12,7 +12,7 @@ function VectorsCloud({ points }) {
       if (len < 1e-6) continue; // skip near-zero
       const dir = end.clone().normalize();
       const color = p.color || "#6ee7ff";
-      out.push({ end, dir, len, color, label: p.label });
+      out.push({ end, dir, len, color, label: p.label, dashed: !!p.dashed });
     }
     return out;
   }, [points]);
@@ -38,7 +38,9 @@ function VectorsCloud({ points }) {
               ]}
               color={v.color}
               lineWidth={2.5}
-              dashed={false}
+              dashed={v.dashed}
+              dashSize={0.12}
+              gapSize={0.08}
             />
             <mesh position={conePos} quaternion={quat}>
               <coneGeometry args={[headRad, headLen, 12]} />

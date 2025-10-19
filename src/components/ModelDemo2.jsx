@@ -32,6 +32,8 @@ export default function ModelDemo() {
   const [dataset, setDataset] = useState([]); // {text, vector: Float32Array}
   const [pca, setPca] = useState(null); // {coords, components, explainedVariance}
   const [tokensInfo, setTokensInfo] = useState(null); // { tokens: string[], ids: number[] }
+  const [tokensPca, setTokensPca] = useState(null); // PCA from token embeddings
+  const [tokensPoints3d, setTokensPoints3d] = useState([]);
 
   const abortRef = useRef(null);
 
@@ -120,16 +122,165 @@ export default function ModelDemo() {
         });
       }
 
-      // Get token strings and ids
+      // Get token strings (no specials) and ids (with specials)
       const tokenStrings = await tokenizer.tokenize(text);
       const encoded = await tokenizer.encode(text, { add_special_tokens: true });
-      const ids = Array.from(
-        encoded?.input_ids ?? encoded?.ids ?? []
-      );
+      const ids = Array.from(encoded?.input_ids ?? encoded?.ids ?? []);
 
-      setTokensInfo({ tokens: tokenStrings, ids });
+      // Also compute per-token embeddings and PCA for visualization
+      if (!extractor) {
+        extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
+          revision: "main",
+          progress_callback: (p) => {
+            if (p?.status && p?.name) setMessage(`${p.status}: ${p.name}`);
+          },
+        });
+      }
+
+      const feat = await extractor(text, { pooling: undefined, normalize: true });
+      const dims = feat?.dims || [];
+      const data = feat?.data || [];
+
+      let seqLen = 0;
+      let hidden = 0;
+      if (dims.length === 3) {
+        // [batch, seq_len, hidden]
+        seqLen = dims[1] || 0;
+        hidden = dims[2] || 0;
+      } else if (dims.length === 2) {
+        // [seq_len, hidden]
+        seqLen = dims[0] || 0;
+        hidden = dims[1] || 0;
+      }
+
+      const dataArr = Array.from(data);
+      const tokenVectors = [];
+      for (let i = 0; i < seqLen; i++) {
+        const start = i * hidden;
+        const end = start + hidden;
+        tokenVectors.push(new Float32Array(dataArr.slice(start, end)));
+      }
+
+      // Build labels aligned to embeddings using ids length to decide specials
+      const seqLenIds = ids.length || seqLen;
+      let specialsHead = 0;
+      let specialsTail = 0;
+      if (seqLenIds === tokenStrings.length + 2) {
+        specialsHead = 1; specialsTail = 1;
+      } else if (seqLenIds === tokenStrings.length + 1) {
+        // Rare: only one special either at head or tail; assume head
+        specialsHead = 1; specialsTail = 0;
+      }
+      let labels = new Array(seqLen).fill('').map((_, i) => `#${i+1}`);
+      let cursor = specialsHead;
+      for (let j = 0; j < tokenStrings.length && cursor < seqLen; j++, cursor++) {
+        labels[cursor] = tokenStrings[j];
+      }
+      if (specialsHead) labels[0] = '[CLS]';
+      if (specialsTail && seqLen >= 1) labels[seqLen - 1] = '[SEP]';
+
+      // Helpers for word/subword detection and label cleanup
+      const isSpecial = (t) =>
+        t === "[CLS]" || t === "[SEP]" || t === "[PAD]" || t === "<s>" || t === "</s>" || t === "<pad>" || t === "<unk>" || t === "<mask>" || /^(\[.*\])$/.test(t);
+      const isStartOfWord = (t) => {
+        if (isSpecial(t)) return false;
+        if (t.startsWith("##")) return false; // WordPiece continuation
+        if (t.startsWith("Ġ")) return true;  // GPT2 BPE word start
+        if (t.startsWith("▁")) return true;  // SentencePiece word start
+        return true; // default assume start
+      };
+      const isSubword = (t) => !isStartOfWord(t) && !isSpecial(t);
+      const cleanTokenText = (t) => t.replace(/^##/, "").replace(/^Ġ/, "").replace(/^▁/, "");
+
+      // Compute PCA on token vectors
+      let tokenPCA = null;
+      if (tokenVectors.length >= 3) {
+        try {
+          const X = tokenVectors.map((v) => Array.from(v));
+          const p = new PCAClass(X, { center: true, scale: false });
+          const proj = p.predict(X, { nComponents: 3 });
+          const coords = proj.to2DArray ? proj.to2DArray() : proj;
+          const explainedVariance = p.getExplainedVariance();
+          tokenPCA = { coords, explainedVariance };
+          setTokensPca(tokenPCA);
+          // Group tokens (based on tokenStrings) into words and map to sequence indices
+          const wordGroups = [];
+          let current = null;
+          let seqIndex = specialsHead; // position in embedding sequence for current tokenStrings index
+          for (let j = 0; j < tokenStrings.length; j++, seqIndex++) {
+            const tok = tokenStrings[j];
+            const i = seqIndex; // seq index including specials
+            if (i >= tokenVectors.length) break;
+            if (!current || isStartOfWord(tok)) {
+              if (current && current.vecs.length) wordGroups.push(current);
+              current = { label: cleanTokenText(tok), vecs: [tokenVectors[i]], indices: [i] };
+            } else {
+              current.label += cleanTokenText(tok);
+              current.vecs.push(tokenVectors[i]);
+              current.indices.push(i);
+            }
+          }
+          if (current && current.vecs.length) wordGroups.push(current);
+
+          // Mark subword tokens: any token that is part of a multi-token word
+          const subwordIndex = new Set();
+          for (const g of wordGroups) {
+            if (g.indices.length > 1) {
+              for (const idx of g.indices) subwordIndex.add(idx);
+            }
+          }
+
+          // Build token points (dashed for subword tokens including first piece of split words)
+          const tokenPts = coords.map((c, i) => ({
+            x: c[0] ?? 0,
+            y: c[1] ?? 0,
+            z: c[2] ?? 0,
+            label: (labels[i] || `#${i + 1}`).slice(0, 24),
+            dashed: subwordIndex.has(i) || isSubword(labels[i]),
+            color: isSpecial(labels[i]) ? '#9aa6b2' : undefined,
+          }));
+
+          // Only words that are not single-token (i.e., split into subwords)
+          const multiTokenWords = wordGroups.filter(g => g.vecs.length > 1);
+          // Pool vectors by mean
+          const wordVecs = multiTokenWords.map(g => {
+            const len = g.vecs[0]?.length || 0;
+            const acc = new Float32Array(len);
+            for (const v of g.vecs) {
+              for (let k = 0; k < len; k++) acc[k] += v[k] || 0;
+            }
+            for (let k = 0; k < len; k++) acc[k] /= g.vecs.length;
+            return acc;
+          });
+          let wordPts = [];
+          if (wordVecs.length) {
+            const Xw = wordVecs.map(v => Array.from(v));
+            const projWords = p.predict(Xw, { nComponents: 3 });
+            const coordsW = projWords.to2DArray ? projWords.to2DArray() : projWords;
+            wordPts = coordsW.map((c, i) => ({
+              x: c[0] ?? 0,
+              y: c[1] ?? 0,
+              z: c[2] ?? 0,
+              label: multiTokenWords[i].label.slice(0, 24),
+              color: 'darkcyan', // darker cyan for word-level embeddings
+              dashed: false,
+            }));
+          }
+
+          setTokensPoints3d([...tokenPts, ...wordPts]);
+        } catch (e) {
+          console.error(e);
+          setTokensPca(null);
+          setTokensPoints3d([]);
+        }
+      } else {
+        setTokensPca(null);
+        setTokensPoints3d([]);
+      }
+
+      setTokensInfo({ tokens: labels, ids });
       setStatus("ready");
-      setMessage("Tokenized");
+      setMessage("Tokenized + projected");
     } catch (e) {
       setStatus("error");
       setError("Failed to tokenize. Check console for details.");
@@ -327,6 +478,31 @@ export default function ModelDemo() {
             />
           ) : (
             <div className="alert">Add at least 3 points to compute PCA.</div>
+          )}
+        </div>
+      )}
+
+      {tokensInfo && (
+        <div className="result">
+          <div className="result__meta">
+            <span>
+              <strong>Token PCA:</strong>{" "}
+              {tokensPca?.explainedVariance && tokensPca.explainedVariance.length >= 3
+                ? tokensPca.explainedVariance
+                    .slice(0, 3)
+                    .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))
+                : "n/a"}
+            </span>
+          </div>
+          {tokensPca ? (
+            <Embedding3D
+              points={tokensPoints3d}
+              width={640}
+              height={360}
+              title="Token PCA Projection (Top 3 PCs)"
+            />
+          ) : (
+            <div className="alert">Token PCA requires at least 3 tokens.</div>
           )}
         </div>
       )}

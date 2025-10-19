@@ -161,36 +161,25 @@ export default function ModelDemo() {
         tokenVectors.push(new Float32Array(dataArr.slice(start, end)));
       }
 
-      // Build labels aligned to embeddings using ids length to decide specials
+      // Determine specials alignment using ids length (with specials) when available
       const seqLenIds = ids.length || seqLen;
       let specialsHead = 0;
       let specialsTail = 0;
       if (seqLenIds === tokenStrings.length + 2) {
         specialsHead = 1; specialsTail = 1;
       } else if (seqLenIds === tokenStrings.length + 1) {
-        // Rare: only one special either at head or tail; assume head
         specialsHead = 1; specialsTail = 0;
       }
+      // Build labels array aligned to sequence tokens
       let labels = new Array(seqLen).fill('').map((_, i) => `#${i+1}`);
       let cursor = specialsHead;
       for (let j = 0; j < tokenStrings.length && cursor < seqLen; j++, cursor++) {
         labels[cursor] = tokenStrings[j];
       }
-      if (specialsHead) labels[0] = '[CLS]';
-      if (specialsTail && seqLen >= 1) labels[seqLen - 1] = '[SEP]';
+      if (specialsHead && seqLen > 0) labels[0] = '[CLS]';
+      if (specialsTail && seqLen > 1) labels[seqLen - 1] = '[SEP]';
 
-      // Helpers for word/subword detection and label cleanup
-      const isSpecial = (t) =>
-        t === "[CLS]" || t === "[SEP]" || t === "[PAD]" || t === "<s>" || t === "</s>" || t === "<pad>" || t === "<unk>" || t === "<mask>" || /^(\[.*\])$/.test(t);
-      const isStartOfWord = (t) => {
-        if (isSpecial(t)) return false;
-        if (t.startsWith("##")) return false; // WordPiece continuation
-        if (t.startsWith("Ġ")) return true;  // GPT2 BPE word start
-        if (t.startsWith("▁")) return true;  // SentencePiece word start
-        return true; // default assume start
-      };
-      const isSubword = (t) => !isStartOfWord(t) && !isSpecial(t);
-      const cleanTokenText = (t) => t.replace(/^##/, "").replace(/^Ġ/, "").replace(/^▁/, "");
+      // No subword/word grouping — visualize tokens only for clarity
 
       // Compute PCA on token vectors
       let tokenPCA = null;
@@ -203,71 +192,81 @@ export default function ModelDemo() {
           const explainedVariance = p.getExplainedVariance();
           tokenPCA = { coords, explainedVariance };
           setTokensPca(tokenPCA);
-          // Group tokens (based on tokenStrings) into words and map to sequence indices
+          // Group tokens into words from tokenStrings and map to sequence indices
+          const isSpecial = (t) => t === '[CLS]' || t === '[SEP]' || t === '[PAD]' || t === '<s>' || t === '</s>' || t === '<pad>' || t === '<unk>' || t === '<mask>' || /^(\[.*\])$/.test(t);
+          const isStartOfWord = (t) => {
+            if (isSpecial(t)) return false;
+            if (t.startsWith('##')) return false; // WordPiece continuation
+            if (t.startsWith('Ġ')) return true;   // GPT-2 BPE word start
+            if (t.startsWith('▁')) return true;   // SentencePiece word start
+            return true; // default assume start
+          };
+          const cleanTokenText = (t) => t.replace(/^##/, '').replace(/^Ġ/, '').replace(/^▁/, '');
+
           const wordGroups = [];
           let current = null;
-          let seqIndex = specialsHead; // position in embedding sequence for current tokenStrings index
-          for (let j = 0; j < tokenStrings.length; j++, seqIndex++) {
+          let seqIndex = specialsHead; // skip head special if present
+          for (let j = 0; j < tokenStrings.length && seqIndex < tokenVectors.length; j++, seqIndex++) {
             const tok = tokenStrings[j];
-            const i = seqIndex; // seq index including specials
-            if (i >= tokenVectors.length) break;
+            const i = seqIndex; // index into tokenVectors/coords
             if (!current || isStartOfWord(tok)) {
               if (current && current.vecs.length) wordGroups.push(current);
-              current = { label: cleanTokenText(tok), vecs: [tokenVectors[i]], indices: [i] };
+              current = { label: cleanTokenText(tok), vecs: [tokenVectors[i]] };
             } else {
               current.label += cleanTokenText(tok);
               current.vecs.push(tokenVectors[i]);
-              current.indices.push(i);
             }
           }
           if (current && current.vecs.length) wordGroups.push(current);
 
-          // Mark subword tokens: any token that is part of a multi-token word
-          const subwordIndex = new Set();
-          for (const g of wordGroups) {
-            if (g.indices.length > 1) {
-              for (const idx of g.indices) subwordIndex.add(idx);
-            }
-          }
-
-          // Build token points (dashed for subword tokens including first piece of split words)
-          const tokenPts = coords.map((c, i) => ({
-            x: c[0] ?? 0,
-            y: c[1] ?? 0,
-            z: c[2] ?? 0,
-            label: (labels[i] || `#${i + 1}`).slice(0, 24),
-            dashed: subwordIndex.has(i) || isSubword(labels[i]),
-            color: isSpecial(labels[i]) ? '#9aa6b2' : undefined,
-          }));
-
-          // Only words that are not single-token (i.e., split into subwords)
-          const multiTokenWords = wordGroups.filter(g => g.vecs.length > 1);
-          // Pool vectors by mean
-          const wordVecs = multiTokenWords.map(g => {
+          // Build word-level vectors (single-token words pass through, multi-token words are pooled)
+          const wordVecs = wordGroups.map(g => {
+            if (g.vecs.length === 1) return Array.from(g.vecs[0]);
             const len = g.vecs[0]?.length || 0;
             const acc = new Float32Array(len);
             for (const v of g.vecs) {
               for (let k = 0; k < len; k++) acc[k] += v[k] || 0;
             }
             for (let k = 0; k < len; k++) acc[k] /= g.vecs.length;
-            return acc;
+            return Array.from(acc);
           });
+
           let wordPts = [];
           if (wordVecs.length) {
-            const Xw = wordVecs.map(v => Array.from(v));
-            const projWords = p.predict(Xw, { nComponents: 3 });
+            const projWords = p.predict(wordVecs, { nComponents: 3 });
             const coordsW = projWords.to2DArray ? projWords.to2DArray() : projWords;
             wordPts = coordsW.map((c, i) => ({
               x: c[0] ?? 0,
               y: c[1] ?? 0,
               z: c[2] ?? 0,
-              label: multiTokenWords[i].label.slice(0, 24),
-              color: 'darkcyan', // darker cyan for word-level embeddings
-              dashed: false,
+              label: wordGroups[i].label.slice(0, 24),
+              color: (wordGroups[i].vecs?.length || 0) > 1 ? 'darkcyan' : undefined,
             }));
           }
 
-          setTokensPoints3d([...tokenPts, ...wordPts]);
+          // Also compute sentence embedding and project with the same PCA
+          let sentencePt = null;
+          try {
+            const sent = await extractor(text, { pooling: 'mean', normalize: true });
+            const svec = Array.from(sent?.data ?? []);
+            if (svec.length) {
+              const projS = p.predict([svec], { nComponents: 3 });
+              const c = projS.to2DArray ? projS.to2DArray()[0] : projS[0];
+              sentencePt = {
+                x: c?.[0] ?? 0,
+                y: c?.[1] ?? 0,
+                z: c?.[2] ?? 0,
+                label: 'Sentence',
+                color: 'red',
+              };
+            }
+          } catch (e) {
+            // ignore sentence embedding failure for visualization
+          }
+
+          // Visualize words plus the sentence point; PCA basis computed from all tokens above
+          const combinedPts = sentencePt ? [...wordPts, sentencePt] : wordPts;
+          setTokensPoints3d(combinedPts);
         } catch (e) {
           console.error(e);
           setTokensPca(null);
@@ -495,12 +494,17 @@ export default function ModelDemo() {
             </span>
           </div>
           {tokensPca ? (
-            <Embedding3D
-              points={tokensPoints3d}
-              width={640}
-              height={360}
-              title="Token PCA Projection (Top 3 PCs)"
-            />
+            <>
+              <Embedding3D
+                points={tokensPoints3d}
+                width={640}
+                height={360}
+                title="Word + Sentence Embeddings on Token PCA"
+              />
+              <div style={{ color: '#a0a7b5', fontSize: 12, marginTop: 6 }}>
+                PCA fit on all tokens; visualizing word-level embeddings and the sentence embedding (red). Multi-token words are dark cyan.
+              </div>
+            </>
           ) : (
             <div className="alert">Token PCA requires at least 3 tokens.</div>
           )}

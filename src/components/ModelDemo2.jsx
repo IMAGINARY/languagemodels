@@ -124,7 +124,9 @@ export default function ModelDemo() {
 
       // Get token strings (no specials) and ids (with specials)
       const tokenStrings = await tokenizer.tokenize(text);
-      const encoded = await tokenizer.encode(text, { add_special_tokens: true });
+      const encoded = await tokenizer.encode(text, {
+        add_special_tokens: true,
+      });
       const ids = Array.from(encoded?.input_ids ?? encoded?.ids ?? []);
 
       // Also compute per-token embeddings and PCA for visualization
@@ -137,7 +139,10 @@ export default function ModelDemo() {
         });
       }
 
-      const feat = await extractor(text, { pooling: undefined, normalize: true });
+      const feat = await extractor(text, {
+        pooling: undefined,
+        normalize: true,
+      });
       const dims = feat?.dims || [];
       const data = feat?.data || [];
 
@@ -166,18 +171,24 @@ export default function ModelDemo() {
       let specialsHead = 0;
       let specialsTail = 0;
       if (seqLenIds === tokenStrings.length + 2) {
-        specialsHead = 1; specialsTail = 1;
+        specialsHead = 1;
+        specialsTail = 1;
       } else if (seqLenIds === tokenStrings.length + 1) {
-        specialsHead = 1; specialsTail = 0;
+        specialsHead = 1;
+        specialsTail = 0;
       }
       // Build labels array aligned to sequence tokens
-      let labels = new Array(seqLen).fill('').map((_, i) => `#${i+1}`);
+      let labels = new Array(seqLen).fill("").map((_, i) => `#${i + 1}`);
       let cursor = specialsHead;
-      for (let j = 0; j < tokenStrings.length && cursor < seqLen; j++, cursor++) {
+      for (
+        let j = 0;
+        j < tokenStrings.length && cursor < seqLen;
+        j++, cursor++
+      ) {
         labels[cursor] = tokenStrings[j];
       }
-      if (specialsHead && seqLen > 0) labels[0] = '[CLS]';
-      if (specialsTail && seqLen > 1) labels[seqLen - 1] = '[SEP]';
+      if (specialsHead && seqLen > 0) labels[0] = "[CLS]";
+      if (specialsTail && seqLen > 1) labels[seqLen - 1] = "[SEP]";
 
       // No subword/word grouping — visualize tokens only for clarity
 
@@ -193,20 +204,34 @@ export default function ModelDemo() {
           tokenPCA = { coords, explainedVariance };
           setTokensPca(tokenPCA);
           // Group tokens into words from tokenStrings and map to sequence indices
-          const isSpecial = (t) => t === '[CLS]' || t === '[SEP]' || t === '[PAD]' || t === '<s>' || t === '</s>' || t === '<pad>' || t === '<unk>' || t === '<mask>' || /^(\[.*\])$/.test(t);
+          const isSpecial = (t) =>
+            t === "[CLS]" ||
+            t === "[SEP]" ||
+            t === "[PAD]" ||
+            t === "<s>" ||
+            t === "</s>" ||
+            t === "<pad>" ||
+            t === "<unk>" ||
+            t === "<mask>" ||
+            /^(\[.*\])$/.test(t);
           const isStartOfWord = (t) => {
             if (isSpecial(t)) return false;
-            if (t.startsWith('##')) return false; // WordPiece continuation
-            if (t.startsWith('Ġ')) return true;   // GPT-2 BPE word start
-            if (t.startsWith('▁')) return true;   // SentencePiece word start
+            if (t.startsWith("##")) return false; // WordPiece continuation
+            if (t.startsWith("Ġ")) return true; // GPT-2 BPE word start
+            if (t.startsWith("▁")) return true; // SentencePiece word start
             return true; // default assume start
           };
-          const cleanTokenText = (t) => t.replace(/^##/, '').replace(/^Ġ/, '').replace(/^▁/, '');
+          const cleanTokenText = (t) =>
+            t.replace(/^##/, "").replace(/^Ġ/, "").replace(/^▁/, "");
 
           const wordGroups = [];
           let current = null;
           let seqIndex = specialsHead; // skip head special if present
-          for (let j = 0; j < tokenStrings.length && seqIndex < tokenVectors.length; j++, seqIndex++) {
+          for (
+            let j = 0;
+            j < tokenStrings.length && seqIndex < tokenVectors.length;
+            j++, seqIndex++
+          ) {
             const tok = tokenStrings[j];
             const i = seqIndex; // index into tokenVectors/coords
             if (!current || isStartOfWord(tok)) {
@@ -220,7 +245,7 @@ export default function ModelDemo() {
           if (current && current.vecs.length) wordGroups.push(current);
 
           // Build word-level vectors (single-token words pass through, multi-token words are pooled)
-          const wordVecs = wordGroups.map(g => {
+          const wordVecs = wordGroups.map((g) => {
             if (g.vecs.length === 1) return Array.from(g.vecs[0]);
             const len = g.vecs[0]?.length || 0;
             const acc = new Float32Array(len);
@@ -234,20 +259,26 @@ export default function ModelDemo() {
           let wordPts = [];
           if (wordVecs.length) {
             const projWords = p.predict(wordVecs, { nComponents: 3 });
-            const coordsW = projWords.to2DArray ? projWords.to2DArray() : projWords;
+            const coordsW = projWords.to2DArray
+              ? projWords.to2DArray()
+              : projWords;
             wordPts = coordsW.map((c, i) => ({
               x: c[0] ?? 0,
               y: c[1] ?? 0,
               z: c[2] ?? 0,
               label: wordGroups[i].label.slice(0, 24),
-              color: (wordGroups[i].vecs?.length || 0) > 1 ? 'darkcyan' : undefined,
+              color:
+                (wordGroups[i].vecs?.length || 0) > 1 ? "darkcyan" : undefined,
             }));
           }
 
           // Also compute sentence embedding and project with the same PCA
           let sentencePt = null;
           try {
-            const sent = await extractor(text, { pooling: 'mean', normalize: true });
+            const sent = await extractor(text, {
+              pooling: "mean",
+              normalize: true,
+            });
             const svec = Array.from(sent?.data ?? []);
             if (svec.length) {
               const projS = p.predict([svec], { nComponents: 3 });
@@ -256,8 +287,8 @@ export default function ModelDemo() {
                 x: c?.[0] ?? 0,
                 y: c?.[1] ?? 0,
                 z: c?.[2] ?? 0,
-                label: 'Sentence',
-                color: 'red',
+                label: "Sentence",
+                color: "red",
               };
             }
           } catch (e) {
@@ -369,14 +400,20 @@ export default function ModelDemo() {
         <button className="btn" onClick={loadModel} disabled={!canRun}>
           {status === "loading" ? "Loading…" : "Load model"}
         </button>
-        <button
+
+        {/* <button
           className="btn btn--primary"
           onClick={runEmbedding}
           disabled={!canRun}
         >
           {status === "running" ? "Running…" : "Compute embedding"}
-        </button>
-        <button className="btn" onClick={runTokenize} disabled={status === 'loading' || status === 'running'}>
+        </button> */}
+
+        <button
+          className="btn btn--primary"
+          onClick={runTokenize}
+          disabled={status === "loading" || status === "running"}
+        >
           Tokenize
         </button>
         <span className={`status status--${status}`}>{message}</span>
@@ -440,14 +477,17 @@ export default function ModelDemo() {
             <strong>Token strings:</strong>
             <div>
               {tokensInfo.tokens.map((t, i) => (
-                <code key={i} style={{ marginRight: 6 }}>{t}</code>
+                <code key={i} style={{ marginRight: 6 }}>
+                  {t}
+                </code>
               ))}
             </div>
           </div>
           <div className="result__preview">
             <strong>Token IDs:</strong>
             <code>
-              [ {tokensInfo.ids.slice(0, 32).join(", ")} {tokensInfo.ids.length > 32 ? "…" : ""} ]
+              [ {tokensInfo.ids.slice(0, 32).join(", ")}{" "}
+              {tokensInfo.ids.length > 32 ? "…" : ""} ]
             </code>
           </div>
         </div>
@@ -486,7 +526,8 @@ export default function ModelDemo() {
           <div className="result__meta">
             <span>
               <strong>Token PCA:</strong>{" "}
-              {tokensPca?.explainedVariance && tokensPca.explainedVariance.length >= 3
+              {tokensPca?.explainedVariance &&
+              tokensPca.explainedVariance.length >= 3
                 ? tokensPca.explainedVariance
                     .slice(0, 3)
                     .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))
@@ -501,8 +542,9 @@ export default function ModelDemo() {
                 height={360}
                 title="Word + Sentence Embeddings on Token PCA"
               />
-              <div style={{ color: '#a0a7b5', fontSize: 12, marginTop: 6 }}>
-                PCA fit on all tokens; visualizing word-level embeddings and the sentence embedding (red). Multi-token words are dark cyan.
+              <div style={{ color: "#a0a7b5", fontSize: 12, marginTop: 6 }}>
+                PCA fit on all tokens; visualizing word-level embeddings and the
+                sentence embedding (red). Multi-token words are dark cyan.
               </div>
             </>
           ) : (

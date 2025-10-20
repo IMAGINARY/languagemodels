@@ -6,7 +6,7 @@ import React, {
   useEffect,
 } from "react";
 
-import { env, pipeline, AutoTokenizer } from "@huggingface/transformers";
+import { env, pipeline, AutoTokenizer, AutoModel } from "@huggingface/transformers";
 env.allowLocalModels = false;
 // See bug at: https://github.com/huggingface/transformers.js/issues/366#event-1351036909
 // If models load html files instead of json/binary, this is likely due to the bundler vite.
@@ -16,6 +16,7 @@ env.allowLocalModels = false;
 
 // Simple in-memory cache for the pipeline during the session
 let extractor = null;
+let baseModel = null; // for attention extraction
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 import Embedding3D from "./Embedding3D.jsx";
 import { PCA as PCAClass } from "ml-pca";
@@ -34,6 +35,7 @@ export default function ModelDemo() {
   const [tokensInfo, setTokensInfo] = useState(null); // { tokens: string[], ids: number[] }
   const [tokensPca, setTokensPca] = useState(null); // PCA from token embeddings
   const [tokensPoints3d, setTokensPoints3d] = useState([]);
+  const [attnInfo, setAttnInfo] = useState(null);
 
   const abortRef = useRef(null);
 
@@ -415,6 +417,109 @@ export default function ModelDemo() {
           disabled={status === "loading" || status === "running"}
         >
           Tokenize
+        </button>
+        <button className="btn" onClick={async () => {
+          try {
+            setError(null);
+            setStatus('attn');
+            setMessage('Computing attention …');
+
+            // Prepare tokenizer/model
+            const tokenizer = extractor?.tokenizer || (await AutoTokenizer.from_pretrained(LOCAL_MODEL_ID, { revision: 'main' }));
+            baseModel = baseModel || (await AutoModel.from_pretrained(LOCAL_MODEL_ID, { revision: 'main' }));
+
+            const encoded = await tokenizer(text, { add_special_tokens: true });
+            const outputs = await baseModel(encoded, { output_attentions: true });
+            let avg = null;
+            let seq = 0;
+            let usedFallback = false;
+
+            const attentions = outputs?.attentions || [];
+            if (attentions.length) {
+              const last = attentions[attentions.length - 1];
+              const dims = last?.dims || [];
+              const data = last?.data || [];
+              // Expect dims: [1, heads, seq, seq]
+              const heads = dims[1] || 0;
+              seq = dims[2] || 0;
+              const seq2 = dims[3] || 0;
+              if (!heads || seq !== seq2) throw new Error(`Unexpected attention dims ${dims}`);
+
+              // Average across heads
+              const strideHead = seq * seq;
+              avg = Array.from({ length: seq }, () => new Float32Array(seq));
+              for (let h = 0; h < heads; h++) {
+                const hOff = h * strideHead;
+                for (let i = 0; i < seq; i++) {
+                  const rowOff = hOff + i * seq;
+                  for (let j = 0; j < seq; j++) {
+                    avg[i][j] += data[rowOff + j] || 0;
+                  }
+                }
+              }
+              for (let i = 0; i < seq; i++) {
+                for (let j = 0; j < seq; j++) avg[i][j] /= heads;
+              }
+            } else {
+              // Fallback: use cosine similarity of last hidden states as an attention proxy
+              usedFallback = true;
+              const lastHidden = outputs?.last_hidden_state;
+              const hdims = lastHidden?.dims || [];
+              const hdata = lastHidden?.data || [];
+              // dims: [1, seq, hidden]
+              seq = hdims[1] || 0;
+              const hidden = hdims[2] || 0;
+              const rows = [];
+              for (let i = 0; i < seq; i++) {
+                const start = i * hidden;
+                const vec = new Float32Array(hdata.slice(start, start + hidden));
+                rows.push(vec);
+              }
+              // Normalize and compute cosine similarities
+              const norms = rows.map(v => Math.hypot(...v));
+              avg = Array.from({ length: seq }, () => new Float32Array(seq));
+              for (let i = 0; i < seq; i++) {
+                for (let j = 0; j < seq; j++) {
+                  let dot = 0;
+                  const vi = rows[i], vj = rows[j];
+                  for (let k = 0; k < hidden; k++) dot += (vi[k] || 0) * (vj[k] || 0);
+                  const denom = (norms[i] || 1e-9) * (norms[j] || 1e-9);
+                  avg[i][j] = dot / denom;
+                }
+              }
+            }
+
+            // Build readable labels aligned with specials
+            const toks = await tokenizer.tokenize(text);
+            const ids = Array.from((await tokenizer.encode(text, { add_special_tokens: true }))?.input_ids || []);
+            const haveSpecials = ids.length === toks.length + 2;
+            const labels = haveSpecials ? ['[CLS]', ...toks, '[SEP]'] : (ids.length === toks.length ? toks : Array.from({length: seq}, (_, i) => `#${i+1}`));
+
+            // Log to console: row-wise attention with labels
+            console.log(usedFallback
+              ? 'Attention proxy (cosine similarity of last hidden states). Rows: query → columns: key'
+              : 'Avg attention (last layer). Rows: query token → columns: key token');
+            console.log('Tokens:', labels);
+            // Create an array of objects for console.table
+            const table = avg.map((row, i) => {
+              const obj = { token: labels[i] || `#${i+1}` };
+              for (let j = 0; j < seq; j++) {
+                obj[labels[j] || `#${j+1}`] = Number(row[j].toFixed(3));
+              }
+              return obj;
+            });
+            console.table(table);
+
+            setAttnInfo({ seq, heads });
+            setStatus('ready');
+            setMessage('Attention computed — see console');
+          } catch (e) {
+            console.error(e);
+            setStatus('error');
+            setError('Failed to compute attention. See console.');
+          }
+        }} disabled={status === 'loading' || status === 'running'}>
+          Compute attention (console)
         </button>
         <span className={`status status--${status}`}>{message}</span>
       </div>

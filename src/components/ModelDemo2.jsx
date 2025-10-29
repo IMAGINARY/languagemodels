@@ -1,12 +1,11 @@
-import React, {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  useEffect,
-} from "react";
+import React, { useCallback, useMemo, useState, useEffect } from "react";
 
-import { env, pipeline, AutoTokenizer, AutoModel } from "@huggingface/transformers";
+import {
+  env,
+  pipeline,
+  AutoTokenizer,
+  AutoModel,
+} from "@huggingface/transformers";
 env.allowLocalModels = false;
 // See bug at: https://github.com/huggingface/transformers.js/issues/366#event-1351036909
 // If models load html files instead of json/binary, this is likely due to the bundler vite.
@@ -19,25 +18,22 @@ let extractor = null;
 let baseModel = null; // for attention extraction
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 import Embedding3D from "./Embedding3D.jsx";
+import AttentionArcs from "./AttentionArcs.jsx";
 import { PCA as PCAClass } from "ml-pca";
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("Model not loaded");
-  const [vectorInfo, setVectorInfo] = useState(null);
   const [error, setError] = useState(null);
   const [text, setText] = useState(
     "Transformers are really cool for embeddings!"
   );
-  const [lastVector, setLastVector] = useState(null);
-  const [dataset, setDataset] = useState([]); // {text, vector: Float32Array}
-  const [pca, setPca] = useState(null); // {coords, components, explainedVariance}
   const [tokensInfo, setTokensInfo] = useState(null); // { tokens: string[], ids: number[] }
   const [tokensPca, setTokensPca] = useState(null); // PCA from token embeddings
   const [tokensPoints3d, setTokensPoints3d] = useState([]);
-  const [attnInfo, setAttnInfo] = useState(null);
+  const [attnInfo, setAttnInfo] = useState(null); // { seq, heads, labels, avg, usedFallback }
 
-  const abortRef = useRef(null);
+  // no abort controller needed in this simplified demo
 
   const canRun = useMemo(
     () => status !== "loading" && status !== "running",
@@ -69,44 +65,7 @@ export default function ModelDemo() {
     }
   }, []);
 
-  const runEmbedding = useCallback(async () => {
-    try {
-      setError(null);
-      setStatus("running");
-      setMessage("Computing embedding …");
-
-      if (!extractor) {
-        // Lazy-load if user skips the explicit load step (remote)
-        extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
-          revision: "main",
-          progress_callback: (p) => {
-            if (p?.status && p?.name) setMessage(`${p.status}: ${p.name}`);
-          },
-        });
-      }
-
-      const output = await extractor(text, {
-        pooling: "mean",
-        normalize: true,
-      });
-      const data = output?.data ?? [];
-      const dims = output?.dims ?? [data.length];
-
-      const preview = Array.from(data).slice(0, 8);
-      setVectorInfo({
-        length: data.length,
-        dims: dims.join("×"),
-        preview,
-      });
-      setLastVector(new Float32Array(data));
-
-      setStatus("ready");
-      setMessage("Done");
-    } catch (e) {
-      setStatus("error");
-      setError("Failed to compute embedding. Check console for details.");
-    }
-  }, [text]);
+  // Removed unused runEmbedding (not part of this demo's UI)
 
   const runTokenize = useCallback(async () => {
     try {
@@ -319,73 +278,9 @@ export default function ModelDemo() {
     }
   }, [text]);
 
-  const cancel = useCallback(() => {
-    try {
-      abortRef.current?.abort?.();
-      setStatus("idle");
-      setMessage("Cancelled");
-    } catch {}
-  }, []);
+  // Removed unused cancel()
 
-  const addToDataset = useCallback(() => {
-    if (!lastVector) return;
-    setDataset((prev) => [...prev, { text, vector: lastVector }]);
-  }, [lastVector, text]);
-
-  const clearDataset = useCallback(() => {
-    setDataset([]);
-    setPca(null);
-  }, []);
-
-  window.showDataset = () => {
-    console.table(
-      dataset.map((d, i) => ({
-        "#": i + 1,
-        text: d.text,
-        vector: d.vector,
-      }))
-    );
-  };
-  // Recompute PCA when dataset changes
-  useEffect(() => {
-    if (dataset.length >= 3) {
-      try {
-        const X = dataset.map((d) => Array.from(d.vector));
-        const p = new PCAClass(X, { center: true, scale: false });
-        const proj = p.predict(X, { nComponents: 3 });
-        const coords = proj.to2DArray ? proj.to2DArray() : proj;
-        const explainedVariance = p.getExplainedVariance();
-        setPca({ coords, explainedVariance });
-      } catch (e) {
-        console.error(e);
-        setPca(null);
-      }
-    } else {
-      setPca(null);
-    }
-  }, [dataset]);
-
-  const points3d = useMemo(() => {
-    if (!pca || !pca.coords) return [];
-    return pca.coords.map((c, i) => ({
-      x: c[0] ?? 0,
-      y: c[1] ?? 0,
-      z: c[2] ?? 0,
-      label: dataset[i]?.text?.slice(0, 24) || `#${i + 1}`,
-    }));
-  }, [pca, dataset]);
-
-  window.showPoints3d = () => {
-    console.table(
-      points3d.map((p) => ({
-        label: p.label,
-        x: p.x,
-        y: p.y,
-        z: p.z,
-        length: Math.hypot(p.x, p.y, p.z),
-      }))
-    );
-  };
+  // Removed dataset-related helpers and PCA; this view focuses on tokenization and attention
   return (
     <div className="panel">
       <div className="row">
@@ -403,13 +298,7 @@ export default function ModelDemo() {
           {status === "loading" ? "Loading…" : "Load model"}
         </button>
 
-        {/* <button
-          className="btn btn--primary"
-          onClick={runEmbedding}
-          disabled={!canRun}
-        >
-          {status === "running" ? "Running…" : "Compute embedding"}
-        </button> */}
+        {/* embedding compute removed for this demo */}
 
         <button
           className="btn btn--primary"
@@ -418,107 +307,138 @@ export default function ModelDemo() {
         >
           Tokenize
         </button>
-        <button className="btn" onClick={async () => {
-          try {
-            setError(null);
-            setStatus('attn');
-            setMessage('Computing attention …');
+        <button
+          className="btn"
+          onClick={async () => {
+            try {
+              setError(null);
+              setStatus("attn");
+              setMessage("Computing attention …");
 
-            // Prepare tokenizer/model
-            const tokenizer = extractor?.tokenizer || (await AutoTokenizer.from_pretrained(LOCAL_MODEL_ID, { revision: 'main' }));
-            baseModel = baseModel || (await AutoModel.from_pretrained(LOCAL_MODEL_ID, { revision: 'main' }));
+              // Prepare tokenizer/model
+              const tokenizer =
+                extractor?.tokenizer ||
+                (await AutoTokenizer.from_pretrained(LOCAL_MODEL_ID, {
+                  revision: "main",
+                }));
+              baseModel =
+                baseModel ||
+                (await AutoModel.from_pretrained(LOCAL_MODEL_ID, {
+                  revision: "main",
+                }));
 
-            const encoded = await tokenizer(text, { add_special_tokens: true });
-            const outputs = await baseModel(encoded, { output_attentions: true });
-            let avg = null;
-            let seq = 0;
-            let usedFallback = false;
+              const encoded = await tokenizer(text, {
+                add_special_tokens: true,
+              });
+              const outputs = await baseModel(encoded, {
+                output_attentions: true,
+              });
+              let avg = null;
+              let seq = 0;
+              let heads = 0;
+              let usedFallback = false;
 
-            const attentions = outputs?.attentions || [];
-            if (attentions.length) {
-              const last = attentions[attentions.length - 1];
-              const dims = last?.dims || [];
-              const data = last?.data || [];
-              // Expect dims: [1, heads, seq, seq]
-              const heads = dims[1] || 0;
-              seq = dims[2] || 0;
-              const seq2 = dims[3] || 0;
-              if (!heads || seq !== seq2) throw new Error(`Unexpected attention dims ${dims}`);
+              const attentions = outputs?.attentions || [];
+              if (attentions.length) {
+                const last = attentions[attentions.length - 1];
+                const dims = last?.dims || [];
+                const data = last?.data || [];
+                // Expect dims: [1, heads, seq, seq]
+                heads = dims[1] || 0;
+                seq = dims[2] || 0;
+                const seq2 = dims[3] || 0;
+                if (!heads || seq !== seq2)
+                  throw new Error(`Unexpected attention dims ${dims}`);
 
-              // Average across heads
-              const strideHead = seq * seq;
-              avg = Array.from({ length: seq }, () => new Float32Array(seq));
-              for (let h = 0; h < heads; h++) {
-                const hOff = h * strideHead;
+                // Average across heads
+                const strideHead = seq * seq;
+                avg = Array.from({ length: seq }, () => new Float32Array(seq));
+                for (let h = 0; h < heads; h++) {
+                  const hOff = h * strideHead;
+                  for (let i = 0; i < seq; i++) {
+                    const rowOff = hOff + i * seq;
+                    for (let j = 0; j < seq; j++) {
+                      avg[i][j] += data[rowOff + j] || 0;
+                    }
+                  }
+                }
                 for (let i = 0; i < seq; i++) {
-                  const rowOff = hOff + i * seq;
+                  for (let j = 0; j < seq; j++) avg[i][j] /= heads;
+                }
+              } else {
+                // Fallback: use cosine similarity of last hidden states as an attention proxy
+                usedFallback = true;
+                const lastHidden = outputs?.last_hidden_state;
+                const hdims = lastHidden?.dims || [];
+                const hdata = lastHidden?.data || [];
+                // dims: [1, seq, hidden]
+                seq = hdims[1] || 0;
+                const hidden = hdims[2] || 0;
+                const rows = [];
+                for (let i = 0; i < seq; i++) {
+                  const start = i * hidden;
+                  const vec = new Float32Array(
+                    hdata.slice(start, start + hidden)
+                  );
+                  rows.push(vec);
+                }
+                // Normalize and compute cosine similarities
+                const norms = rows.map((v) => Math.hypot(...v));
+                avg = Array.from({ length: seq }, () => new Float32Array(seq));
+                for (let i = 0; i < seq; i++) {
                   for (let j = 0; j < seq; j++) {
-                    avg[i][j] += data[rowOff + j] || 0;
+                    let dot = 0;
+                    const vi = rows[i],
+                      vj = rows[j];
+                    for (let k = 0; k < hidden; k++)
+                      dot += (vi[k] || 0) * (vj[k] || 0);
+                    const denom = (norms[i] || 1e-9) * (norms[j] || 1e-9);
+                    avg[i][j] = dot / denom;
                   }
                 }
               }
-              for (let i = 0; i < seq; i++) {
-                for (let j = 0; j < seq; j++) avg[i][j] /= heads;
-              }
-            } else {
-              // Fallback: use cosine similarity of last hidden states as an attention proxy
-              usedFallback = true;
-              const lastHidden = outputs?.last_hidden_state;
-              const hdims = lastHidden?.dims || [];
-              const hdata = lastHidden?.data || [];
-              // dims: [1, seq, hidden]
-              seq = hdims[1] || 0;
-              const hidden = hdims[2] || 0;
-              const rows = [];
-              for (let i = 0; i < seq; i++) {
-                const start = i * hidden;
-                const vec = new Float32Array(hdata.slice(start, start + hidden));
-                rows.push(vec);
-              }
-              // Normalize and compute cosine similarities
-              const norms = rows.map(v => Math.hypot(...v));
-              avg = Array.from({ length: seq }, () => new Float32Array(seq));
-              for (let i = 0; i < seq; i++) {
+
+              // Build readable labels aligned with specials
+              const toks = await tokenizer.tokenize(text);
+              const ids = Array.from(
+                (await tokenizer.encode(text, { add_special_tokens: true }))
+                  ?.input_ids || []
+              );
+              const haveSpecials = ids.length === toks.length + 2;
+              const labels = haveSpecials
+                ? ["[CLS]", ...toks, "[SEP]"]
+                : ids.length === toks.length
+                ? toks
+                : Array.from({ length: seq }, (_, i) => `#${i + 1}`);
+
+              // Log to console: row-wise attention with labels
+              console.log(
+                usedFallback
+                  ? "Attention proxy (cosine similarity of last hidden states). Rows: query → columns: key"
+                  : "Avg attention (last layer). Rows: query token → columns: key token"
+              );
+              console.log("Tokens:", labels);
+              // Create an array of objects for console.table
+              const table = avg.map((row, i) => {
+                const obj = { token: labels[i] || `#${i + 1}` };
                 for (let j = 0; j < seq; j++) {
-                  let dot = 0;
-                  const vi = rows[i], vj = rows[j];
-                  for (let k = 0; k < hidden; k++) dot += (vi[k] || 0) * (vj[k] || 0);
-                  const denom = (norms[i] || 1e-9) * (norms[j] || 1e-9);
-                  avg[i][j] = dot / denom;
+                  obj[labels[j] || `#${j + 1}`] = Number(row[j].toFixed(3));
                 }
-              }
+                return obj;
+              });
+              console.table(table);
+
+              setAttnInfo({ seq, heads, labels, avg, usedFallback });
+              setStatus("ready");
+              setMessage("Attention computed — see console");
+            } catch (e) {
+              console.error(e);
+              setStatus("error");
+              setError("Failed to compute attention. See console.");
             }
-
-            // Build readable labels aligned with specials
-            const toks = await tokenizer.tokenize(text);
-            const ids = Array.from((await tokenizer.encode(text, { add_special_tokens: true }))?.input_ids || []);
-            const haveSpecials = ids.length === toks.length + 2;
-            const labels = haveSpecials ? ['[CLS]', ...toks, '[SEP]'] : (ids.length === toks.length ? toks : Array.from({length: seq}, (_, i) => `#${i+1}`));
-
-            // Log to console: row-wise attention with labels
-            console.log(usedFallback
-              ? 'Attention proxy (cosine similarity of last hidden states). Rows: query → columns: key'
-              : 'Avg attention (last layer). Rows: query token → columns: key token');
-            console.log('Tokens:', labels);
-            // Create an array of objects for console.table
-            const table = avg.map((row, i) => {
-              const obj = { token: labels[i] || `#${i+1}` };
-              for (let j = 0; j < seq; j++) {
-                obj[labels[j] || `#${j+1}`] = Number(row[j].toFixed(3));
-              }
-              return obj;
-            });
-            console.table(table);
-
-            setAttnInfo({ seq, heads });
-            setStatus('ready');
-            setMessage('Attention computed — see console');
-          } catch (e) {
-            console.error(e);
-            setStatus('error');
-            setError('Failed to compute attention. See console.');
-          }
-        }} disabled={status === 'loading' || status === 'running'}>
+          }}
+          disabled={status === "loading" || status === "running"}
+        >
           Compute attention (console)
         </button>
         <span className={`status status--${status}`}>{message}</span>
@@ -526,47 +446,7 @@ export default function ModelDemo() {
 
       {error && <div className="alert alert--error">{error}</div>}
 
-      {vectorInfo && (
-        <div className="result">
-          <div className="result__meta">
-            <span>
-              <strong>Dims:</strong> {vectorInfo.dims}
-            </span>
-            <span>
-              <strong>Length:</strong> {vectorInfo.length}
-            </span>
-          </div>
-          <div className="result__preview">
-            <strong>Preview:</strong>
-            <code>
-              {"[ "}
-              {vectorInfo.preview.map((v, i) => (
-                <span key={i}>
-                  {i ? ", " : ""}
-                  {v.toFixed(4)}
-                </span>
-              ))}{" "}
-              … ]
-            </code>
-          </div>
-          <div className="row" style={{ marginTop: 8 }}>
-            <button
-              className="btn"
-              onClick={addToDataset}
-              disabled={!lastVector}
-            >
-              Add point to dataset
-            </button>
-            <button
-              className="btn"
-              onClick={clearDataset}
-              disabled={!dataset.length}
-            >
-              Clear dataset ({dataset.length})
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Removed vector preview and dataset actions for this demo */}
 
       {tokensInfo && (
         <div className="result">
@@ -580,13 +460,12 @@ export default function ModelDemo() {
           </div>
           <div className="result__preview">
             <strong>Token strings:</strong>
-            <div>
-              {tokensInfo.tokens.map((t, i) => (
-                <code key={i} style={{ marginRight: 6 }}>
-                  {t}
-                </code>
-              ))}
-            </div>
+            <AttentionArcs
+              tokens={tokensInfo.tokens}
+              //               tokens={attnInfo?.labels || tokensInfo.tokens}
+
+              attnMatrix={attnInfo?.avg || null}
+            />
           </div>
           <div className="result__preview">
             <strong>Token IDs:</strong>
@@ -598,33 +477,7 @@ export default function ModelDemo() {
         </div>
       )}
 
-      {dataset.length > 0 && (
-        <div className="result">
-          <div className="result__meta">
-            <span>
-              <strong>Dataset size:</strong> {dataset.length}
-            </span>
-            {pca?.explainedVariance && pca.explainedVariance.length >= 3 && (
-              <span>
-                <strong>Explained:</strong>{" "}
-                {pca.explainedVariance
-                  .slice(0, 3)
-                  .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))}
-              </span>
-            )}
-          </div>
-          {pca ? (
-            <Embedding3D
-              points={points3d}
-              width={640}
-              height={360}
-              title="PCA Projection (Top 3 PCs)"
-            />
-          ) : (
-            <div className="alert">Add at least 3 points to compute PCA.</div>
-          )}
-        </div>
-      )}
+      {/* Removed dataset PCA block for this demo */}
 
       {tokensInfo && (
         <div className="result">

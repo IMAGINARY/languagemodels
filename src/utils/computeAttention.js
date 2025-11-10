@@ -119,11 +119,25 @@ export async function computeAttention(
     attention = perLayer[li];
   }
 
-  // ids -> tokens
+  // ids -> readable token strings (prefer tokenizer conversion; fallback aligns specials)
   const ids = Array.from(enc.input_ids.data);
-  const tokens = tokenizer.convert_ids_to_tokens
-    ? tokenizer.convert_ids_to_tokens(ids)
-    : ids.map(String);
+  let tokens;
+  if (typeof tokenizer.convert_ids_to_tokens === "function") {
+    tokens = tokenizer.convert_ids_to_tokens(ids);
+  } else {
+    // Fallback: build from raw tokenize() and add specials if present
+    const base = await tokenizer.tokenize(sentence);
+    const T = enc.input_ids.dims?.[1] ?? ids.length;
+    if (T === base.length + 2) {
+      tokens = ["[CLS]", ...base, "[SEP]"];
+    } else if (T === base.length + 1) {
+      tokens = ["[CLS]", ...base];
+    } else if (T === base.length) {
+      tokens = base;
+    } else {
+      tokens = Array.from({ length: T }, (_, i) => `#${i + 1}`);
+    }
+  }
 
   return { tokens, attention };
 }

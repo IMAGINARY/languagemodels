@@ -21,8 +21,8 @@ function VectorsCloud({ points }) {
     <group>
       {vectors.map((v, i) => {
         // Arrow head dimensions relative to vector length
-        const headLen = Math.max(0.04, Math.min(0.12, 0.08 * v.len));
-        const headRad = headLen * 0.4;
+        const headLen = Math.max(0.04, Math.min(0.12, 0.08 * v.len)) * 0.5;
+        const headRad = headLen * 0.3;
         // Cone placement so that its tip sits exactly at the end point
         const conePos = v.end.clone().addScaledVector(v.dir, -headLen * 0.5);
         const quat = new THREE.Quaternion().setFromUnitVectors(
@@ -96,7 +96,6 @@ export default function Embedding3D({
   height = 360,
   title = "Embedding PCA (3D)",
 }) {
-
   return (
     <div className="viz3d" style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>

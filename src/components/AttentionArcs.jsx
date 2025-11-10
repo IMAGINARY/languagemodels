@@ -8,6 +8,7 @@ export default function AttentionArcs({ tokens, attnMatrix }) {
 
   useEffect(() => {
     const measure = () => {
+      // Measure token centers
       const cont = containerRef.current;
       if (!cont || !tokens?.length) return;
       setWidth(cont.clientWidth);
@@ -18,12 +19,13 @@ export default function AttentionArcs({ tokens, attnMatrix }) {
       });
       setCenters(cs);
     };
-    measure();
-    const onResize = () => measure();
+    measure(); // Initial measure
+    const onResize = () => measure(); // Re-measure on resize
     const cont = containerRef.current;
     window.addEventListener("resize", onResize);
     cont?.addEventListener("scroll", measure, { passive: true });
     return () => {
+      // Cleanup listeners
       window.removeEventListener("resize", onResize);
       cont?.removeEventListener("scroll", measure);
     };

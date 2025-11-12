@@ -61,8 +61,8 @@ export async function computeAttention(
   sentence = "The quick brown fox jumps over the lazy dog.",
   {
     modelId = "bradynapier/all_miniLM_L6_v2_with_attentions_onnx",
-    layer = "last", // 0..L-1, 'last', or 'mean' (mean = average across layers)
-    head = "mean", // 0..H-1 or 'mean'
+    layer = "last", // 0..L-1, 'last', or 'mean'
+    head = "mean", // 0..H-1, 'mean', or 'none'
   } = {}
 ) {
   const tokenizer = await AutoTokenizer.from_pretrained(modelId);
@@ -80,11 +80,13 @@ export async function computeAttention(
     [1, T]
   );
 
-  const out = await model({
-    ...enc,
-    attention_mask: mask,
-    output_attentions: true,
-  });
+  const out = await model(
+    {
+      ...enc,
+      attention_mask: mask,
+    },
+    { output_attentions: true, output_hidden_states: true }
+  );
 
   // Collect attentions as array of tensors [1,H,T,T]
   const attentions = Array.isArray(out.attentions)
@@ -97,26 +99,45 @@ export async function computeAttention(
         )
         .map((k) => out[k]);
 
-  if (!attentions?.length)
-    throw new Error("No attentions returned by this graph.");
+  if (!attentions?.length) {
+    if (head === "none") {
+      // allow embeddings-only flows
+    } else {
+      throw new Error("No attentions returned by this graph.");
+    }
+  }
   const L = attentions.length;
+  const H = attentions?.[0]?.dims?.[1] || 0;
 
   // Compute per-layer [T,T] by either head mean or single head
-  const perLayer = attentions.map((t) =>
-    head === "mean" ? headMean(t) : headSlice(t, head)
-  );
-
-  // Pick layer: last, specific index, or mean across layers
   let attention;
-  if (layer === "mean") {
-    attention = layerMean(perLayer);
-  } else if (layer === "last") {
-    attention = perLayer[L - 1];
-  } else {
-    const li = Number(layer);
-    if (!Number.isInteger(li) || li < 0 || li >= L)
-      throw new Error(`Layer index out of range 0..${L - 1}`);
-    attention = perLayer[li];
+  if (attentions?.length && head !== "none") {
+    const perLayer = attentions.map((t) =>
+      head === "mean" ? headMean(t) : headSlice(t, head)
+    );
+    if (layer === "mean") {
+      attention = layerMean(perLayer);
+    } else if (layer === "last") {
+      attention = perLayer[L - 1];
+    } else {
+      const li = Number(layer);
+      if (!Number.isInteger(li) || li < 0 || li >= L)
+        throw new Error(`Layer index out of range 0..${L - 1}`);
+      attention = perLayer[li];
+    }
+  }
+
+  // Try to provide token embeddings (last_hidden_state) for PCA/visuals
+  let embeddings = null; // Array of length T, each Float32Array(hidden)
+  const lhs = out.last_hidden_state || (out.hidden_states && out.hidden_states[out.hidden_states.length - 1]);
+  if (lhs && lhs.data && lhs.dims?.length === 3 && lhs.dims[0] === 1) {
+    const T = lhs.dims[1];
+    const D = lhs.dims[2];
+    embeddings = [];
+    for (let i = 0; i < T; i++) {
+      const start = i * D;
+      embeddings.push(new Float32Array(lhs.data.slice(start, start + D)));
+    }
   }
 
   // ids -> readable token strings (prefer tokenizer conversion; fallback aligns specials)
@@ -139,7 +160,7 @@ export async function computeAttention(
     }
   }
 
-  return { tokens, attention };
+  return { tokens, attention, numHeads: H, embeddings };
 }
 
 // Example (no UI yet):

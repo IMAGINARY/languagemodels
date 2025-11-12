@@ -64,7 +64,6 @@ export default function App() {
             </div>
             <p className="card__lead">
               Explore how tokenization works and visualize attention maps.
-              (Attention not yet implemented)
             </p>
             <ModelDemo2 />
           </section>

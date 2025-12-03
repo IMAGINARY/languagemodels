@@ -7,12 +7,25 @@ function VectorsCloud({ points }) {
   const vectors = useMemo(() => {
     const out = [];
     for (const p of points || []) {
+      const start = new THREE.Vector3(
+        p.x0 ?? p.startX ?? 0,
+        p.y0 ?? p.startY ?? 0,
+        p.z0 ?? p.startZ ?? 0
+      );
       const end = new THREE.Vector3(p.x, p.y, p.z);
-      const len = end.length();
+      const dir = end.clone().sub(start);
+      const len = dir.length();
       if (len < 1e-6) continue; // skip near-zero
-      const dir = end.clone().normalize();
       const color = p.color || "#6ee7ff";
-      out.push({ end, dir, len, color, label: p.label, dashed: !!p.dashed });
+      out.push({
+        start,
+        end,
+        dir: dir.normalize(),
+        len,
+        color,
+        label: p.label,
+        dashed: !!p.dashed,
+      });
     }
     return out;
   }, [points]);
@@ -33,7 +46,7 @@ function VectorsCloud({ points }) {
           <group key={i}>
             <Line
               points={[
-                [0, 0, 0],
+                [v.start.x, v.start.y, v.start.z],
                 [v.end.x, v.end.y, v.end.z],
               ]}
               color={v.color}
@@ -58,14 +71,20 @@ function Labels({ points }) {
     <group>
       {points.map((p, i) => {
         if (!p.label) return null;
-        const len = Math.hypot(p.x, p.y, p.z);
-        const ox = len > 0 ? p.x / len : 0;
-        const oy = len > 0 ? p.y / len : 0;
-        const oz = len > 0 ? p.z / len : 0;
+        const sx = p.x0 ?? p.startX ?? 0;
+        const sy = p.y0 ?? p.startY ?? 0;
+        const sz = p.z0 ?? p.startZ ?? 0;
+        const dx = (p.x ?? 0) - sx;
+        const dy = (p.y ?? 0) - sy;
+        const dz = (p.z ?? 0) - sz;
+        const len = Math.hypot(dx, dy, dz);
+        const ox = len > 0 ? dx / len : 0;
+        const oy = len > 0 ? dy / len : 0;
+        const oz = len > 0 ? dz / len : 0;
         const offset = 0.1; // small world-unit offset beyond arrow tip
-        const px = p.x + ox * offset;
-        const py = p.y + oy * offset;
-        const pz = p.z + oz * offset;
+        const px = (p.x ?? 0) + ox * offset;
+        const py = (p.y ?? 0) + oy * offset;
+        const pz = (p.z ?? 0) + oz * offset;
         return (
           <group key={i} position={[px, py, pz]}>
             <Html center style={{ pointerEvents: "none" }}>

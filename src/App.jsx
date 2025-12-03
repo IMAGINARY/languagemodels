@@ -2,9 +2,10 @@ import React, { useState } from "react";
 import ModelDemo1 from "./components/ModelDemo1.jsx";
 import ModelDemo2 from "./components/ModelDemo2.jsx";
 import ModelDemo3 from "./components/ModelDemo3.jsx";
+import ModelDemo4 from "./components/ModelDemo4.jsx";
 
 export default function App() {
-  const [view, setView] = useState("menu"); // 'menu' | 'model1' | 'model2' | 'model3'
+  const [view, setView] = useState("menu"); // 'menu' | 'model1' | 'model2' | 'model3' | 'model4'
 
   return (
     <div className="app">
@@ -38,6 +39,11 @@ export default function App() {
               <li>
                 <button className="btn" onClick={() => setView("model3")}>
                   Token similarity (vector KNN)
+                </button>
+              </li>
+              <li>
+                <button className="btn" onClick={() => setView("model4")}>
+                  Analogy
                 </button>
               </li>
             </ul>
@@ -87,6 +93,22 @@ export default function App() {
               Enter a word or short phrase, find the 5 nearest tokens, and view a PCA of the query plus neighbors.
             </p>
             <ModelDemo3 />
+          </section>
+        )}
+
+        {view === "model4" && (
+          <section className="card">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2>Analogy</h2>
+              <button className="btn" onClick={() => setView("menu")}>
+                ← Back to menu
+              </button>
+            </div>
+            <p className="card__lead">
+              Enter three tokens t1, t2, t3. The app computes t1 - t2 + t3,
+              finds the closest 5 tokens, and visualizes the vectors.
+            </p>
+            <ModelDemo4 />
           </section>
         )}
       </main>

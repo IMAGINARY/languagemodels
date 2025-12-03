@@ -5,7 +5,7 @@ from transformers import AutoModel, AutoTokenizer
 
 # Hugging Face ID matching Xenova/all-MiniLM-L6-v2 weights
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
-K = 5
+K = 6
 OPSET = 17
 OUTPATH = "minilm_token_knn.onnx"
 OUTPATH_VEC = "minilm_vector_knn.onnx"

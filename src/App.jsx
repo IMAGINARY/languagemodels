@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import ModelDemo1 from "./components/ModelDemo1.jsx";
 import ModelDemo2 from "./components/ModelDemo2.jsx";
+import ModelDemo3 from "./components/ModelDemo3.jsx";
 
 export default function App() {
-  const [view, setView] = useState("menu"); // 'menu' | 'model1' | 'model2'
+  const [view, setView] = useState("menu"); // 'menu' | 'model1' | 'model2' | 'model3'
 
   return (
     <div className="app">
@@ -32,6 +33,11 @@ export default function App() {
               <li>
                 <button className="btn" onClick={() => setView("model2")}>
                   Tokenization and attention
+                </button>
+              </li>
+              <li>
+                <button className="btn" onClick={() => setView("model3")}>
+                  Token similarity (vector KNN)
                 </button>
               </li>
             </ul>
@@ -66,6 +72,21 @@ export default function App() {
               Explore how tokenization works and visualize attention maps.
             </p>
             <ModelDemo2 />
+          </section>
+        )}
+
+        {view === "model3" && (
+          <section className="card">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2>Token similarity (vector KNN)</h2>
+              <button className="btn" onClick={() => setView("menu")}>
+                ← Back to menu
+              </button>
+            </div>
+            <p className="card__lead">
+              Enter a word or short phrase, find the 5 nearest tokens, and view a PCA of the query plus neighbors.
+            </p>
+            <ModelDemo3 />
           </section>
         )}
       </main>

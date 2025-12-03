@@ -58,13 +58,8 @@ function idToToken(
 
 export async function mostSimilarTokensToToken(
   tokenString: string,
-  k = 5
+  k = 6
 ): Promise<SimilarToken[]> {
-  if (k !== 5) {
-    // The exported graph bakes in K=5. Re-export if you want a different K.
-    console.warn("This ONNX was exported with TopK=5; ignoring custom k.");
-  }
-
   const [tokenizer, session] = await Promise.all([
     tokenizerPromise,
     sessionPromise,
@@ -87,8 +82,14 @@ export async function mostSimilarTokensToToken(
     token_id: toInt64Tensor(tokenId),
   };
   const results = await session.run(feeds);
-  const topIdx = results.top_indices.data as BigInt64Array; // [5]
-  const topScores = results.top_scores.data as Float32Array; // [5]
+  const topIdx = results.top_indices.data as BigInt64Array;
+  const topScores = results.top_scores.data as Float32Array;
+  if (topIdx.length < k) {
+    console.warn(
+      `ONNX returned topK=${topIdx.length}; cannot satisfy requested k=${k}. ` +
+        `Regenerate the KNN model with a higher K if needed.`
+    );
+  }
 
   // Map back to tokens
   const out: SimilarToken[] = Array.from({ length: topIdx.length }, (_, i) => {
@@ -109,10 +110,7 @@ export async function mostSimilarTokensToVector(
   queryVector: Float32Array | number[],
   opts?: { k?: number; onnxUrl?: string }
 ): Promise<SimilarToken[]> {
-  const k = opts?.k ?? 5;
-  if (k !== 5) {
-    console.warn("This ONNX was exported with TopK=5; ignoring custom k.");
-  }
+  const k = opts?.k ?? 6;
 
   const onnxUrl = opts?.onnxUrl;
   if (!onnxUrl) {
@@ -139,8 +137,14 @@ export async function mostSimilarTokensToVector(
   };
 
   const results = await session.run(feeds);
-  const topIdx = results.top_indices.data as BigInt64Array; // [5]
-  const topScores = results.top_scores.data as Float32Array; // [5]
+  const topIdx = results.top_indices.data as BigInt64Array;
+  const topScores = results.top_scores.data as Float32Array;
+  if (topIdx.length < k) {
+    console.warn(
+      `ONNX returned topK=${topIdx.length}; cannot satisfy requested k=${k}. ` +
+        `Regenerate the KNN model with a higher K if needed.`
+    );
+  }
 
   const out: SimilarToken[] = Array.from({ length: topIdx.length }, (_, i) => {
     const id = Number(topIdx[i]);

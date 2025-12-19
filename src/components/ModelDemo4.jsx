@@ -1,20 +1,46 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { PCA as PCAClass } from "ml-pca";
-import { AutoTokenizer, env, pipeline } from "@huggingface/transformers";
+import * as ort from "onnxruntime-web";
 import Embedding3D from "./Embedding3D.jsx";
-import { mostSimilarTokensToVector } from "../utils/similarTokens.ts";
+import vocab from "../models/word2vec_vocab.json";
 
-env.allowLocalModels = false;
-
-const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+const EMBED_ONNX_URL = new URL(
+  "../models/word2vec_embed.onnx",
+  import.meta.url
+).href;
 const VECTOR_KNN_URL = new URL(
-  "../models/minilm_vector_knn.onnx",
+  "../models/word2vec_vector_knn.onnx",
   import.meta.url
 ).href;
 
-const tokenizerPromise = AutoTokenizer.from_pretrained(LOCAL_MODEL_ID);
-let extractor = null;
+// Prefer WebGPU; fallback to WASM
+const epPromise = (async () => {
+  try {
+    const webgpu = await ort.env.webgpu;
+    if (webgpu?.adapterInfo) return { executionProviders: ["webgpu", "wasm"] };
+  } catch (err) {
+    console.warn("WebGPU probe failed; using WASM", err);
+  }
+  return { executionProviders: ["wasm"] };
+})();
+
+const tokenToId = new Map(vocab.map((t, i) => [t, i]));
+let embedSession = null;
+let knnSession = null;
 const EPS = 1e-8;
+
+function createRunLock() {
+  let chain = Promise.resolve();
+  return (task) => {
+    const next = chain.then(task, task);
+    chain = next.catch(() => {});
+    return next;
+  };
+}
+
+// ONNX Runtime web sessions cannot handle concurrent runs; serialize calls per session.
+const runEmbedLocked = createRunLock();
+const runKnnLocked = createRunLock();
 
 function dot(a, b) {
   let s = 0;
@@ -35,24 +61,44 @@ function normalize(a) {
   return out;
 }
 
-async function ensureExtractor() {
-  if (extractor) return extractor;
-  extractor = await pipeline("feature-extraction", LOCAL_MODEL_ID, {
-    revision: "main",
-  });
-  return extractor;
-}
-
-async function embedToken(token, tokenizer) {
-  const ids = tokenizer.encode(token, { add_special_tokens: false });
-  if (ids.length !== 1) {
-    throw new Error(
-      `Input "${token}" splits into ${ids.length} tokens. Please enter a single token and try again.`
+async function ensureSessions() {
+  if (!embedSession) {
+    embedSession = await ort.InferenceSession.create(
+      EMBED_ONNX_URL,
+      await epPromise
     );
   }
-  const model = await ensureExtractor();
-  const output = await model(token, { pooling: "mean", normalize: true });
-  return new Float32Array(output?.data ?? []);
+  if (!knnSession) {
+    knnSession = await ort.InferenceSession.create(
+      VECTOR_KNN_URL,
+      await epPromise
+    );
+  }
+}
+
+function toInt64Tensor(value) {
+  return new ort.Tensor("int64", new BigInt64Array([BigInt(value)]), [1]);
+}
+
+function toFloatTensor(vec) {
+  const arr = vec instanceof Float32Array ? vec : Float32Array.from(vec);
+  return new ort.Tensor("float32", arr, [1, arr.length]);
+}
+
+async function embedToken(token) {
+  const id = tokenToId.get(token);
+  if (typeof id !== "number") {
+    throw new Error(
+      `Token "${token}" is not in the word2vec vocabulary. Try a different token.`
+    );
+  }
+  await ensureSessions();
+  const output = await runEmbedLocked(() =>
+    embedSession.run({ token_id: toInt64Tensor(id) })
+  );
+  const emb = output.embedding?.data;
+  if (!emb) throw new Error("Embedding output missing.");
+  return new Float32Array(emb);
 }
 
 export default function ModelDemo4() {
@@ -69,9 +115,9 @@ export default function ModelDemo4() {
   const loadModel = useCallback(async () => {
     try {
       setStatus("loading");
-      setMessage("Loading tokenizer and model…");
+      setMessage("Loading word2vec ONNX…");
       setError(null);
-      await Promise.all([tokenizerPromise, ensureExtractor()]);
+      await ensureSessions();
       setStatus("ready");
       setMessage("Model ready");
     } catch (e) {
@@ -97,25 +143,30 @@ export default function ModelDemo4() {
       setPoints([]);
       setExplained([]);
 
-      const tokenizer = await tokenizerPromise;
       const [v1, v2, v3] = await Promise.all([
-        embedToken(a, tokenizer),
-        embedToken(b, tokenizer),
-        embedToken(c, tokenizer),
+        embedToken(a),
+        embedToken(b),
+        embedToken(c),
       ]);
 
       const w = new Float32Array(v1.length);
       for (let i = 0; i < v1.length; i++) {
         w[i] = v1[i] - v2[i] + v3[i];
       }
-
       const wQuery = normalize(w) ?? w;
 
       setMessage("Searching nearest neighbors…");
-      const nn = await mostSimilarTokensToVector(wQuery, {
-        k: 5,
-        onnxUrl: VECTOR_KNN_URL,
-      });
+      await ensureSessions();
+      const results = await runKnnLocked(() =>
+        knnSession.run({ query_emb: toFloatTensor(wQuery) })
+      );
+      const topIdx = Array.from(results.top_indices.data || []);
+      const topScores = Array.from(results.top_scores.data || []);
+      const nn = topIdx.map((id, i) => ({
+        id: Number(id),
+        token: vocab[Number(id)] ?? `#${id}`,
+        score: topScores[i] ?? 0,
+      }));
       setNeighbors(nn);
 
       // Project everything using PCA trained on {v1, v2, v3}
@@ -135,7 +186,7 @@ export default function ModelDemo4() {
       const neighborVectors = await Promise.all(
         nn.map(async (n) => ({
           token: n.token,
-          coords: project(await embedToken(n.token, tokenizer)),
+          coords: project(await embedToken(n.token)),
         }))
       );
 

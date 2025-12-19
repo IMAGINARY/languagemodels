@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitControls, Html, Line } from "@react-three/drei";
@@ -115,6 +115,36 @@ export default function Embedding3D({
   height = 360,
   title = "Embedding PCA (3D)",
 }) {
+  const [contextLost, setContextLost] = useState(false);
+  const [glMessage, setGlMessage] = useState(null);
+  const cleanupRef = useRef(null);
+
+  const handleCreated = useCallback(({ gl }) => {
+    const canvas = gl.domElement;
+    const onLost = (e) => {
+      e.preventDefault();
+      setContextLost(true);
+      setGlMessage("WebGL context lost. Attempting to restore…");
+      try {
+        gl.forceContextRestore?.();
+      } catch (err) {
+        console.warn("Failed to force context restore", err);
+      }
+    };
+    const onRestored = () => {
+      setContextLost(false);
+      setGlMessage(null);
+    };
+    canvas.addEventListener("webglcontextlost", onLost, false);
+    canvas.addEventListener("webglcontextrestored", onRestored, false);
+    cleanupRef.current = () => {
+      canvas.removeEventListener("webglcontextlost", onLost, false);
+      canvas.removeEventListener("webglcontextrestored", onRestored, false);
+    };
+  }, []);
+
+  useEffect(() => () => cleanupRef.current?.(), []);
+
   return (
     <div className="viz3d" style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -123,10 +153,12 @@ export default function Embedding3D({
           {points.length ? `${points.length} points` : "no points"}
         </span>
       </div>
-      <div style={{ width: "100%", height }}>
+      <div style={{ width: "100%", height, position: "relative" }}>
         <Canvas
           camera={{ position: [1.8, 1.2, 1.8], fov: 50 }}
-          gl={{ antialias: true }}
+          dpr={[1, 1.6]}
+          gl={{ antialias: true, powerPreference: "high-performance" }}
+          onCreated={handleCreated}
         >
           <color attach="background" args={["#0b0d16"]} />
           <ambientLight intensity={0.6} />
@@ -145,9 +177,27 @@ export default function Embedding3D({
             zoomSpeed={0.8}
           />
         </Canvas>
+        {glMessage ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(5,7,12,0.7)",
+              color: "#cdd3e4",
+              fontSize: 13,
+              backdropFilter: "blur(1px)",
+            }}
+          >
+            {glMessage}
+          </div>
+        ) : null}
       </div>
       <div style={{ display: "flex", gap: 8, color: "#a0a7b5" }}>
         <span>Drag to orbit, wheel to zoom</span>
+        {contextLost ? <span>Rendering paused; resume after restore.</span> : null}
       </div>
     </div>
   );

@@ -31,11 +31,7 @@ export default function App() {
                   Word/Sentence embeddings
                 </button>
               </li>
-              <li>
-                <button className="btn" onClick={() => setView("model2")}>
-                  Tokenization and attention
-                </button>
-              </li>
+
               <li>
                 <button className="btn" onClick={() => setView("model3")}>
                   Token similarity (vector KNN)
@@ -44,6 +40,11 @@ export default function App() {
               <li>
                 <button className="btn" onClick={() => setView("model4")}>
                   Analogy
+                </button>
+              </li>
+              <li>
+                <button className="btn" onClick={() => setView("model2")}>
+                  Tokenization and attention
                 </button>
               </li>
             </ul>
@@ -90,7 +91,8 @@ export default function App() {
               </button>
             </div>
             <p className="card__lead">
-              Enter a word or short phrase, find the 5 nearest tokens, and view a PCA of the query plus neighbors.
+              Enter a word or short phrase, find the 5 nearest tokens, and view
+              a PCA of the query plus neighbors.
             </p>
             <ModelDemo3 />
           </section>

@@ -19,6 +19,11 @@ let extractor = null;
 const LOCAL_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 import Embedding3D from "./Embedding3D.jsx";
 import { PCA as PCAClass } from "ml-pca";
+import {
+  projectOneVector,
+  projectTwoVectors,
+  projectThreeVectors,
+} from "../utils/projections.js";
 
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
@@ -30,7 +35,7 @@ export default function ModelDemo() {
   );
   const [lastVector, setLastVector] = useState(null);
   const [dataset, setDataset] = useState([]); // {text, vector: Float32Array}
-  const [pca, setPca] = useState(null); // {coords, components, explainedVariance}
+  const [projection, setProjection] = useState(null); // {mode, coords, explainedVariance}
 
   const abortRef = useRef(null);
 
@@ -118,7 +123,7 @@ export default function ModelDemo() {
 
   const clearDataset = useCallback(() => {
     setDataset([]);
-    setPca(null);
+    setProjection(null);
   }, []);
 
   window.showDataset = () => {
@@ -130,34 +135,70 @@ export default function ModelDemo() {
       }))
     );
   };
-  // Recompute PCA when dataset changes
+  // Recompute visualization projection when dataset changes.
   useEffect(() => {
-    if (dataset.length >= 3) {
-      try {
-        const X = dataset.map((d) => Array.from(d.vector));
-        const p = new PCAClass(X, { center: true, scale: false });
-        const proj = p.predict(X, { nComponents: 3 });
-        const coords = proj.to2DArray ? proj.to2DArray() : proj;
-        const explainedVariance = p.getExplainedVariance();
-        setPca({ coords, explainedVariance });
-      } catch (e) {
-        console.error(e);
-        setPca(null);
+    if (dataset.length === 0) {
+      setProjection(null);
+      return;
+    }
+
+    try {
+      const vectors = dataset.map((d) => d.vector);
+
+      if (vectors.length === 1) {
+        setProjection({
+          mode: "isometric-1",
+          coords: [projectOneVector(vectors[0])],
+          explainedVariance: null,
+        });
+        return;
       }
-    } else {
-      setPca(null);
+
+      if (vectors.length === 2) {
+        setProjection({
+          mode: "isometric-2",
+          coords: projectTwoVectors(vectors[0], vectors[1]),
+          explainedVariance: null,
+        });
+        return;
+      }
+
+      if (vectors.length === 3) {
+        setProjection({
+          mode: "isometric-3",
+          coords: projectThreeVectors(vectors[0], vectors[1], vectors[2]),
+          explainedVariance: null,
+        });
+        return;
+      }
+
+      const X = vectors.map((vector) => Array.from(vector));
+      const p = new PCAClass(X, { center: true, scale: false });
+      const proj = p.predict(X, { nComponents: 3 });
+      const coords = proj.to2DArray ? proj.to2DArray() : proj;
+      const explainedVariance = p.getExplainedVariance();
+      setProjection({ mode: "pca", coords, explainedVariance });
+    } catch (e) {
+      console.error(e);
+      setProjection(null);
     }
   }, [dataset]);
 
+  const projectionLabel = useMemo(() => {
+    if (!projection) return null;
+    if (projection.mode === "pca") return "Projection: PCA";
+    return "Projection: isometric";
+  }, [projection]);
+
   const points3d = useMemo(() => {
-    if (!pca || !pca.coords) return [];
-    return pca.coords.map((c, i) => ({
+    if (!projection?.coords) return [];
+    return projection.coords.map((c, i) => ({
       x: c[0] ?? 0,
       y: c[1] ?? 0,
       z: c[2] ?? 0,
       label: dataset[i]?.text?.slice(0, 24) || `#${i + 1}`,
     }));
-  }, [pca, dataset]);
+  }, [projection, dataset]);
 
   window.showPoints3d = () => {
     console.table(
@@ -246,28 +287,33 @@ export default function ModelDemo() {
             <span>
               <strong>Dataset size:</strong> {dataset.length}
             </span>
-            {pca?.explainedVariance && pca.explainedVariance.length >= 3 && (
-              <span>
-                <strong>Explained:</strong>{" "}
-                {pca.explainedVariance
-                  .slice(0, 3)
-                  .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))}
-              </span>
-            )}
+            {projectionLabel ? <span>{projectionLabel}</span> : null}
+            {projection?.explainedVariance &&
+              projection.explainedVariance.length >= 3 && (
+                <span>
+                  <strong>Explained:</strong>{" "}
+                  {projection.explainedVariance
+                    .slice(0, 3)
+                    .map((v, i) => v.toFixed(3) + (i < 2 ? ", " : ""))}
+                </span>
+              )}
           </div>
-          {pca ? (
+          {projection ? (
             <Embedding3D
               points={points3d}
               width={640}
               height={360}
-              title="PCA Projection (Top 3 PCs)"
+              title={
+                projection.mode === "pca"
+                  ? "PCA Projection (Top 3 PCs)"
+                  : "Isometric Projection"
+              }
             />
           ) : (
-            <div className="alert">Add at least 3 points to compute PCA.</div>
+            <div className="alert">Projection unavailable for this dataset.</div>
           )}
         </div>
       )}
     </div>
   );
 }
-

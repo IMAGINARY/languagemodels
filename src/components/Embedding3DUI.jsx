@@ -94,15 +94,19 @@ export default function Embedding3DUI({
   title = "3D Embedding Viewer",
   onClearItems,
   onDeleteItem,
+  onSelectionChange,
 }) {
   const [projectionMode, setProjectionMode] = useState("isometric");
-  const [selectedIndex, setSelectedIndex] = useState(null);
+  const [selectedIndexes, setSelectedIndexes] = useState([]);
   const [hoveredIndex, setHoveredIndex] = useState(null);
 
   const normalizedItems = useMemo(
     () =>
       items.map((item, index) => ({
-        label: item.label || `#${index + 1}`,
+        ...item,
+        labelFull: item.labelFull || item.label || `#${index + 1}`,
+        labelVec:
+          item.labelVec || item.label || item.labelFull || `#${index + 1}`,
         vector: item.vector,
       })),
     [items]
@@ -114,33 +118,44 @@ export default function Embedding3DUI({
   }, [normalizedItems, projectionMode]);
 
   useEffect(() => {
-    if (selectedIndex !== null && selectedIndex >= normalizedItems.length) {
-      setSelectedIndex(null);
-    }
+    setSelectedIndexes((prev) =>
+      prev.filter((index) => index >= 0 && index < normalizedItems.length)
+    );
     if (hoveredIndex !== null && hoveredIndex >= normalizedItems.length) {
       setHoveredIndex(null);
     }
-  }, [hoveredIndex, normalizedItems.length, selectedIndex]);
+  }, [hoveredIndex, normalizedItems.length]);
+
+  useEffect(() => {
+    onSelectionChange?.(
+      selectedIndexes.map((index) => ({
+        index,
+        item: normalizedItems[index],
+      }))
+    );
+  }, [normalizedItems, onSelectionChange, selectedIndexes]);
 
   const points = useMemo(() => {
-    const activeIndex = hoveredIndex ?? selectedIndex;
     return normalizedItems.map((item, index) => {
       const coords = projection.coords[index] ?? [0, 0, 0];
-      const isActive = activeIndex === index;
-      const hasActive = activeIndex !== null;
+      const isHovered = hoveredIndex === index;
+      const isSelected = selectedIndexes.includes(index);
+      const hasSelection = selectedIndexes.length > 0;
       return {
         x: coords[0] ?? 0,
         y: coords[1] ?? 0,
         z: coords[2] ?? 0,
-        label: item.label,
-        color: isActive
+        label: item.labelVec,
+        color: isHovered
           ? "#f59e0b"
-          : hasActive
-            ? "#4b5563"
+          : isSelected
+            ? "#f59e0b"
+            : hasSelection
+              ? "#4b5563"
             : "#6ee7ff",
       };
     });
-  }, [hoveredIndex, normalizedItems, projection.coords, selectedIndex]);
+  }, [hoveredIndex, normalizedItems, projection.coords, selectedIndexes]);
 
   const explainedLabel = useMemo(() => {
     if (!projection.explainedVariance?.length) return null;
@@ -186,13 +201,28 @@ export default function Embedding3DUI({
           {explainedLabel ? <span>{explainedLabel}</span> : null}
         </div>
 
+        <div className="embedding3d-ui__legend">
+          <div className="embedding3d-ui__legend-item">
+            <span className="embedding3d-ui__swatch" />
+            <span>Single-token word</span>
+          </div>
+          <div className="embedding3d-ui__legend-item">
+            <span className="embedding3d-ui__swatch embedding3d-ui__swatch--multi" />
+            <span>Multi-token text</span>
+          </div>
+          <div className="embedding3d-ui__legend-item">
+            <span className="embedding3d-ui__swatch embedding3d-ui__swatch--selected" />
+            <span>Selection</span>
+          </div>
+        </div>
+
         <div className="embedding3d-ui__list" role="list">
           {normalizedItems.map((item, index) => {
-            const isSelected = selectedIndex === index;
+            const isSelected = selectedIndexes.includes(index);
             const isHovered = hoveredIndex === index;
             return (
               <div
-                key={`${item.label}-${index}`}
+                key={`${item.labelFull}-${index}`}
                 className={`embedding3d-ui__item${isSelected || isHovered ? " embedding3d-ui__item--active" : ""}`}
                 onMouseEnter={() => setHoveredIndex(index)}
                 onMouseLeave={() => setHoveredIndex((current) => (current === index ? null : current))}
@@ -200,18 +230,29 @@ export default function Embedding3DUI({
                 <button
                   type="button"
                   className="embedding3d-ui__item-main"
-                  onClick={() =>
-                    setSelectedIndex((current) => (current === index ? null : index))
-                  }
+                  onClick={() => {
+                    setSelectedIndexes((current) =>
+                      current.includes(index)
+                        ? current.filter((value) => value !== index)
+                        : [...current, index]
+                    );
+                  }}
                 >
-                  <span className="embedding3d-ui__swatch" />
-                  <span className="embedding3d-ui__item-label">{item.label}</span>
+                  <span
+                    className={`embedding3d-ui__swatch${item.singleToken === false ? " embedding3d-ui__swatch--multi" : ""}`}
+                  />
+                  <span className="embedding3d-ui__item-label">{item.labelFull}</span>
                 </button>
                 <button
                   type="button"
                   className="embedding3d-ui__delete"
-                  aria-label={`Delete ${item.label}`}
-                  onClick={() => onDeleteItem?.(index)}
+                  aria-label={`Delete ${item.labelFull}`}
+                  onClick={() => {
+                    setSelectedIndexes((current) =>
+                      current.filter((value) => value !== index)
+                    );
+                    onDeleteItem?.(index);
+                  }}
                 >
                   ×
                 </button>

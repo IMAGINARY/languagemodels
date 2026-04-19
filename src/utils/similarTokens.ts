@@ -43,6 +43,10 @@ function toFloatTensor(vec: Float32Array | number[]) {
 }
 
 type SimilarToken = { id: number; token: string; score: number };
+type TokenMetadata = {
+  tokenId?: number;
+  singleToken: boolean;
+};
 
 function idToToken(
   tokenizer: Awaited<typeof tokenizerPromise>,
@@ -60,14 +64,10 @@ export async function mostSimilarTokensToToken(
   tokenString: string,
   k = 6
 ): Promise<SimilarToken[]> {
-  const [tokenizer, session] = await Promise.all([
-    tokenizerPromise,
-    sessionPromise,
-  ]);
-
-  // Tokenize without special tokens; ensure it is exactly one token
-  const ids = tokenizer.encode(tokenString, { add_special_tokens: false });
-  if (ids.length !== 1) {
+  const { tokenId } = await getTokenMetadata(tokenString);
+  if (typeof tokenId !== "number") {
+    const tokenizer = await tokenizerPromise;
+    const ids = tokenizer.encode(tokenString, { add_special_tokens: false });
     throw new Error(
       `Input "${tokenString}" splits into ${ids.length} tokens: ` +
         `[${ids.map((i) => idToToken(tokenizer, i)).join(", ")}]. ` +
@@ -75,9 +75,18 @@ export async function mostSimilarTokensToToken(
     );
   }
 
-  const tokenId = ids[0];
+  return mostSimilarTokensToTokenId(tokenId, k);
+}
 
-  // Run ONNX: feed token_id -> get top_indices, top_scores
+export async function mostSimilarTokensToTokenId(
+  tokenId: number,
+  k = 6
+): Promise<SimilarToken[]> {
+  const [tokenizer, session] = await Promise.all([
+    tokenizerPromise,
+    sessionPromise,
+  ]);
+
   const feeds: Record<string, ort.Tensor> = {
     token_id: toInt64Tensor(tokenId),
   };
@@ -100,6 +109,23 @@ export async function mostSimilarTokensToToken(
   });
 
   return out;
+}
+
+export async function getTokenMetadata(
+  tokenString: string
+): Promise<TokenMetadata> {
+  const tokenizer = await tokenizerPromise;
+  const ids = tokenizer.encode(tokenString, { add_special_tokens: false });
+  if (ids.length === 1) {
+    return {
+      tokenId: Number(ids[0]),
+      singleToken: true,
+    };
+  }
+  return {
+    tokenId: undefined,
+    singleToken: false,
+  };
 }
 
 /**

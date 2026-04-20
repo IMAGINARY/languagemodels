@@ -1,51 +1,18 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { PCA as PCAClass } from "ml-pca";
-import * as ort from "onnxruntime-web";
 import Embedding3D from "./Embedding3D.jsx";
-import vocab from "../models/word2vec_vocab.json";
+import {
+  embedWord2VecToken,
+  ensureWord2VecSessions,
+  mostSimilarWord2VecTokensToVector,
+} from "../utils/word2vec.ts";
 
-const EMBED_ONNX_URL = new URL(
-  "../models/word2vec_embed.onnx",
-  import.meta.url
-).href;
-const VECTOR_KNN_URL = new URL(
-  "../models/word2vec_vector_knn.onnx",
-  import.meta.url
-).href;
-
-// Prefer WebGPU; fallback to WASM
-const epPromise = (async () => {
-  try {
-    const webgpu = await ort.env.webgpu;
-    if (webgpu?.adapterInfo) return { executionProviders: ["webgpu", "wasm"] };
-  } catch (err) {
-    console.warn("WebGPU probe failed; using WASM", err);
-  }
-  return { executionProviders: ["wasm"] };
-})();
-
-const tokenToId = new Map(vocab.map((t, i) => [t, i]));
-let embedSession = null;
-let knnSession = null;
 const EPS = 1e-8;
 
-function createRunLock() {
-  let chain = Promise.resolve();
-  return (task) => {
-    const next = chain.then(task, task);
-    chain = next.catch(() => {});
-    return next;
-  };
-}
-
-// ONNX Runtime web sessions cannot handle concurrent runs; serialize calls per session.
-const runEmbedLocked = createRunLock();
-const runKnnLocked = createRunLock();
-
 function dot(a, b) {
-  let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
-  return s;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += a[i] * b[i];
+  return sum;
 }
 
 function norm(a) {
@@ -53,52 +20,12 @@ function norm(a) {
 }
 
 function normalize(a) {
-  const n = norm(a);
-  if (n < EPS) return null;
+  const length = norm(a);
+  if (length < EPS) return null;
   const out = new Float32Array(a.length);
-  const inv = 1 / n;
+  const inv = 1 / length;
   for (let i = 0; i < a.length; i++) out[i] = a[i] * inv;
   return out;
-}
-
-async function ensureSessions() {
-  if (!embedSession) {
-    embedSession = await ort.InferenceSession.create(
-      EMBED_ONNX_URL,
-      await epPromise
-    );
-  }
-  if (!knnSession) {
-    knnSession = await ort.InferenceSession.create(
-      VECTOR_KNN_URL,
-      await epPromise
-    );
-  }
-}
-
-function toInt64Tensor(value) {
-  return new ort.Tensor("int64", new BigInt64Array([BigInt(value)]), [1]);
-}
-
-function toFloatTensor(vec) {
-  const arr = vec instanceof Float32Array ? vec : Float32Array.from(vec);
-  return new ort.Tensor("float32", arr, [1, arr.length]);
-}
-
-async function embedToken(token) {
-  const id = tokenToId.get(token);
-  if (typeof id !== "number") {
-    throw new Error(
-      `Token "${token}" is not in the word2vec vocabulary. Try a different token.`
-    );
-  }
-  await ensureSessions();
-  const output = await runEmbedLocked(() =>
-    embedSession.run({ token_id: toInt64Tensor(id) })
-  );
-  const emb = output.embedding?.data;
-  if (!emb) throw new Error("Embedding output missing.");
-  return new Float32Array(emb);
 }
 
 export default function ModelDemo4() {
@@ -117,7 +44,7 @@ export default function ModelDemo4() {
       setStatus("loading");
       setMessage("Loading word2vec ONNX…");
       setError(null);
-      await ensureSessions();
+      await ensureWord2VecSessions();
       setStatus("ready");
       setMessage("Model ready");
     } catch (e) {
@@ -144,9 +71,9 @@ export default function ModelDemo4() {
       setExplained([]);
 
       const [v1, v2, v3] = await Promise.all([
-        embedToken(a),
-        embedToken(b),
-        embedToken(c),
+        embedWord2VecToken(a).then((result) => result.vector),
+        embedWord2VecToken(b).then((result) => result.vector),
+        embedWord2VecToken(c).then((result) => result.vector),
       ]);
 
       const w = new Float32Array(v1.length);
@@ -156,17 +83,7 @@ export default function ModelDemo4() {
       const wQuery = normalize(w) ?? w;
 
       setMessage("Searching nearest neighbors…");
-      await ensureSessions();
-      const results = await runKnnLocked(() =>
-        knnSession.run({ query_emb: toFloatTensor(wQuery) })
-      );
-      const topIdx = Array.from(results.top_indices.data || []);
-      const topScores = Array.from(results.top_scores.data || []);
-      const nn = topIdx.map((id, i) => ({
-        id: Number(id),
-        token: vocab[Number(id)] ?? `#${id}`,
-        score: topScores[i] ?? 0,
-      }));
+      const nn = await mostSimilarWord2VecTokensToVector(wQuery);
       setNeighbors(nn);
 
       // Project everything using PCA trained on {v1, v2, v3}
@@ -186,7 +103,7 @@ export default function ModelDemo4() {
       const neighborVectors = await Promise.all(
         nn.map(async (n) => ({
           token: n.token,
-          coords: project(await embedToken(n.token)),
+          coords: project((await embedWord2VecToken(n.token)).vector),
         }))
       );
 

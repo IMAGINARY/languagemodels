@@ -41,7 +41,7 @@ function projectIsometrically(items) {
   if (!items.length) {
     return {
       coords: [],
-      modeLabel: "Isometric",
+      modeLabel: "Basis subspace",
       subtitle: "No vectors",
     };
   }
@@ -57,7 +57,7 @@ function projectIsometrically(items) {
 
   return {
     coords,
-    modeLabel: "Isometric",
+    modeLabel: "Basis subspace",
     subtitle:
       items.length >= 3
         ? "Basis from the first three vectors"
@@ -192,38 +192,22 @@ export default function Embedding3DUI({
               Clear all
             </button>
           </div>
-          <label className="embedding3d-ui__control">
-            <span>Projection</span>
+          <label className="embedding3d-ui__control embedding3d-ui__control--inline">
+            <span>Projection:</span>
             <select
               className="input embedding3d-ui__select"
               value={projectionMode}
               onChange={(e) => setProjectionMode(e.target.value)}
             >
-              <option value="isometric">Isometric</option>
+              <option value="isometric">Basis subspace</option>
               <option value="pca">PCA</option>
             </select>
           </label>
         </div>
 
         <div className="embedding3d-ui__meta">
-          <span>{projection.modeLabel}</span>
           <span>{projection.subtitle}</span>
           {explainedLabel ? <span>{explainedLabel}</span> : null}
-        </div>
-
-        <div className="embedding3d-ui__legend">
-          <div className="embedding3d-ui__legend-item">
-            <span className="embedding3d-ui__swatch" />
-            <span>Single-token word</span>
-          </div>
-          <div className="embedding3d-ui__legend-item">
-            <span className="embedding3d-ui__swatch embedding3d-ui__swatch--multi" />
-            <span>Multi-token text</span>
-          </div>
-          <div className="embedding3d-ui__legend-item">
-            <span className="embedding3d-ui__swatch embedding3d-ui__swatch--selected" />
-            <span>Selection</span>
-          </div>
         </div>
 
         <div className="embedding3d-ui__list" role="list">
@@ -248,9 +232,7 @@ export default function Embedding3DUI({
                     );
                   }}
                 >
-                  <span
-                    className={`embedding3d-ui__swatch${item.singleToken === false ? " embedding3d-ui__swatch--multi" : ""}`}
-                  />
+                  <span className="embedding3d-ui__swatch" />
                   <span className="embedding3d-ui__item-label">{item.labelFull}</span>
                 </button>
                 <button

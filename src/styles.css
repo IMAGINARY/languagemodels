@@ -167,6 +167,29 @@ h1 { margin: 0; font-size: 22px; }
   font-size: 13px;
 }
 
+.model1-tools__distance {
+  display: grid;
+  gap: 10px;
+}
+
+.model1-tools__distance-pair,
+.model1-tools__distance-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model1-tools__distance-pair {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.model1-tools__distance-metric {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .embedding3d-ui {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);

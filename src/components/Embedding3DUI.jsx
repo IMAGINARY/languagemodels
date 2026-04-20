@@ -95,6 +95,7 @@ export default function Embedding3DUI({
   onClearItems,
   onDeleteItem,
   onSelectionChange,
+  selectedIndexesExternal,
 }) {
   const [projectionMode, setProjectionMode] = useState("isometric");
   const [selectedIndexes, setSelectedIndexes] = useState([]);
@@ -125,6 +126,15 @@ export default function Embedding3DUI({
       setHoveredIndex(null);
     }
   }, [hoveredIndex, normalizedItems.length]);
+
+  useEffect(() => {
+    if (!Array.isArray(selectedIndexesExternal)) return;
+    setSelectedIndexes(
+      selectedIndexesExternal.filter(
+        (index) => index >= 0 && index < normalizedItems.length
+      )
+    );
+  }, [normalizedItems.length, selectedIndexesExternal]);
 
   useEffect(() => {
     onSelectionChange?.(

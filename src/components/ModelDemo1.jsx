@@ -29,6 +29,27 @@ const VECTOR_KNN_URL = new URL(
   import.meta.url
 ).href;
 
+function getDatasetItemKey(item) {
+  if (item.singleToken && typeof item.tokenId === "number") {
+    return `token:${item.tokenId}`;
+  }
+  return `text:${String(item.labelFull || "").trim().toLowerCase()}`;
+}
+
+function dot(a, b) {
+  let total = 0;
+  for (let i = 0; i < a.length; i++) total += a[i] * b[i];
+  return total;
+}
+
+function norm(vector) {
+  return Math.sqrt(dot(vector, vector));
+}
+
+function combineLabel(labelA, labelB, labelC) {
+  return `${labelA} - ${labelB} + ${labelC}`;
+}
+
 export default function ModelDemo() {
   const [status, setStatus] = useState("idle");
   const [message, setMessage] = useState("Loading model …");
@@ -39,12 +60,15 @@ export default function ModelDemo() {
   const textareaRef = useRef(null);
   const trimmedText = text.trim();
   const [selectedItems, setSelectedItems] = useState([]);
+  const [autoSelectIndexes, setAutoSelectIndexes] = useState(null);
   const [toolStatus, setToolStatus] = useState("idle");
   const [toolMessage, setToolMessage] = useState(
-    "Select one vector to use a tool."
+    "Select vectors to use a tool."
   );
   const [toolError, setToolError] = useState(null);
+  const [toolWarning, setToolWarning] = useState(null);
   const [nearestTokens, setNearestTokens] = useState([]);
+  const [similarityResult, setSimilarityResult] = useState(null);
 
   const nonSingleTokenWarning =
     "Warning: your input is not a single token. In this model, the embedding is the mean-pooled representation across its token parts.";
@@ -93,6 +117,20 @@ export default function ModelDemo() {
     textareaRef.current?.focus();
   }, []);
 
+  const appendUniqueDatasetItems = useCallback((itemsToAdd) => {
+    setDataset((prev) => {
+      const seen = new Set(prev.map(getDatasetItemKey));
+      const uniqueItems = [];
+      for (const item of itemsToAdd) {
+        const key = getDatasetItemKey(item);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        uniqueItems.push(item);
+      }
+      return uniqueItems.length ? [...prev, ...uniqueItems] : prev;
+    });
+  }, []);
+
   const runEmbedding = useCallback(async () => {
     try {
       setError(null);
@@ -122,11 +160,10 @@ export default function ModelDemo() {
       });
       const { tokenId, singleToken } = await getTokenMetadata(trimmedText);
       const nextVector = new Float32Array(data);
-      setDataset((prev) => [
-        ...prev,
+      appendUniqueDatasetItems([
         {
           labelFull: trimmedText,
-          labelVec: trimmedText.slice(0, 40) || `#${prev.length + 1}`,
+          labelVec: trimmedText.slice(0, 40),
           tokenId,
           singleToken,
           vector: nextVector,
@@ -142,19 +179,23 @@ export default function ModelDemo() {
       setError("Failed to compute embedding. Check console for details.");
       setMessage("Embedding failed");
     }
-  }, [loadModel, nonSingleTokenWarning, trimmedText]);
+  }, [appendUniqueDatasetItems, loadModel, nonSingleTokenWarning, trimmedText]);
 
   const clearDataset = useCallback(() => {
     setDataset([]);
     setSelectedItems([]);
+    setAutoSelectIndexes(null);
     setNearestTokens([]);
+    setSimilarityResult(null);
     setToolStatus("idle");
-    setToolMessage("Select one vector to use a tool.");
+    setToolMessage("Select vectors to use a tool.");
     setToolError(null);
+    setToolWarning(null);
   }, []);
 
   const deleteDatasetItem = useCallback((indexToDelete) => {
     setDataset((prev) => prev.filter((_, index) => index !== indexToDelete));
+    setAutoSelectIndexes(null);
   }, []);
 
   const embedText = useCallback(
@@ -181,12 +222,14 @@ export default function ModelDemo() {
       setToolStatus("error");
       setToolError("Select exactly one vector to find nearest tokens.");
       setToolMessage("Nearest-token lookup needs one selected vector.");
+      setToolWarning(null);
       return;
     }
 
     try {
       setToolStatus("running");
       setToolError(null);
+      setToolWarning(null);
       setToolMessage("Finding nearest tokens…");
 
       const queryVector = selectedItems[0].item.vector;
@@ -224,7 +267,7 @@ export default function ModelDemo() {
       );
 
       setNearestTokens(neighbors);
-      setDataset((prev) => [...prev, ...neighborVectors]);
+      appendUniqueDatasetItems(neighborVectors);
       setToolStatus("ready");
       setToolMessage("Added 5 nearest tokens to the dataset.");
     } catch (e) {
@@ -233,7 +276,108 @@ export default function ModelDemo() {
       setToolError("Failed to find nearest tokens.");
       setToolMessage("Nearest-token lookup failed.");
     }
-  }, [embedText, selectedItems]);
+  }, [appendUniqueDatasetItems, embedText, selectedItems]);
+
+  const handleSimilarity = useCallback(() => {
+    if (selectedItems.length !== 2) {
+      setToolStatus("error");
+      setToolError("Select exactly two vectors to compute cosine similarity.");
+      setToolMessage("Similarity needs two selected vectors.");
+      setToolWarning(null);
+      return;
+    }
+
+    try {
+      const [itemA, itemB] = selectedItems.map((entry) => entry.item);
+      const normA = norm(itemA.vector);
+      const normB = norm(itemB.vector);
+      if (!normA || !normB) {
+        throw new Error("Zero-length vector");
+      }
+
+      const cosineSimilarity = dot(itemA.vector, itemB.vector) / (normA * normB);
+
+      setSimilarityResult({
+        labelA: itemA.labelFull,
+        labelB: itemB.labelFull,
+        cosineSimilarity,
+      });
+      setToolWarning(
+        itemA.singleToken !== itemB.singleToken
+          ? "Warning: comparing a single-token item with a multi-token text may be less semantically aligned than comparing like with like."
+          : null
+      );
+      setToolStatus("ready");
+      setToolError(null);
+      setToolMessage("Cosine similarity computed.");
+    } catch (e) {
+      console.error(e);
+      setToolStatus("error");
+      setToolError("Failed to compute cosine similarity.");
+      setToolWarning(null);
+      setToolMessage("Similarity computation failed.");
+    }
+  }, [selectedItems]);
+
+  const handleAnalogy = useCallback(() => {
+    if (selectedItems.length !== 3) {
+      setToolStatus("error");
+      setToolError("Select exactly three vectors to compute an analogy.");
+      setToolWarning(null);
+      setToolMessage("Analogy needs three selected vectors.");
+      return;
+    }
+
+    try {
+      const [itemA, itemB, itemC] = selectedItems.map((entry) => entry.item);
+      const analogyVector = new Float32Array(itemA.vector.length);
+      for (let i = 0; i < analogyVector.length; i++) {
+        analogyVector[i] = itemA.vector[i] - itemB.vector[i] + itemC.vector[i];
+      }
+
+      const labelFull = combineLabel(
+        itemA.labelFull,
+        itemB.labelFull,
+        itemC.labelFull
+      );
+      const labelVec = combineLabel(
+        itemA.labelVec,
+        itemB.labelVec,
+        itemC.labelVec
+      ).slice(0, 40);
+      const sameSingleTokenType =
+        itemA.singleToken === itemB.singleToken &&
+        itemB.singleToken === itemC.singleToken;
+
+      appendUniqueDatasetItems([
+        {
+          labelFull,
+          labelVec,
+          tokenId: undefined,
+          singleToken: sameSingleTokenType ? itemA.singleToken : false,
+          vector: analogyVector,
+        },
+      ]);
+      setAutoSelectIndexes([dataset.length]);
+
+      setToolStatus("ready");
+      setToolError(null);
+      setToolWarning(
+        sameSingleTokenType
+          ? null
+          : "Warning: the selected items do not share the same single-token type, so this analogy mixes representation types."
+      );
+      setToolMessage(
+        `Computed the embedding corresponding to ${itemA.labelVec} - ${itemB.labelVec} + ${itemC.labelVec}. Try to find the nearest tokens to that vector.`
+      );
+    } catch (e) {
+      console.error(e);
+      setToolStatus("error");
+      setToolError("Failed to compute analogy.");
+      setToolWarning(null);
+      setToolMessage("Analogy computation failed.");
+    }
+  }, [appendUniqueDatasetItems, dataset.length, selectedItems]);
 
   const handleTextareaKeyDown = useCallback(
     (event) => {
@@ -325,7 +469,13 @@ export default function ModelDemo() {
                 items={dataset}
                 onClearItems={clearDataset}
                 onDeleteItem={deleteDatasetItem}
-                onSelectionChange={setSelectedItems}
+                onSelectionChange={(items) => {
+                  setSelectedItems(items);
+                  if (autoSelectIndexes) {
+                    setAutoSelectIndexes(null);
+                  }
+                }}
+                selectedIndexesExternal={autoSelectIndexes}
                 height={420}
                 title="Embedding Projection"
               />
@@ -350,14 +500,59 @@ export default function ModelDemo() {
                 {toolStatus === "running" ? "Working…" : "Find 5 nearest tokens"}
               </button>
 
+              <button
+                type="button"
+                className="btn"
+                onClick={handleSimilarity}
+                disabled={toolStatus === "running" || selectedItems.length !== 2}
+              >
+                Similarity
+              </button>
+
+              <button
+                type="button"
+                className="btn"
+                onClick={handleAnalogy}
+                disabled={toolStatus === "running" || selectedItems.length !== 3}
+              >
+                Analogy
+              </button>
+
               <div className="model1-tools__status">
                 <span className={`status status--${toolStatus}`}>{toolMessage}</span>
+                {toolWarning ? <div className="alert">{toolWarning}</div> : null}
                 {toolError ? <div className="alert alert--error">{toolError}</div> : null}
               </div>
 
               <div className="model1-tools__results">
                 <div className="model1-tools__panel-header">
-                  <h4 className="model1-tools__panel-title">Nearest tokens</h4>
+                  <h4 className="model1-tools__panel-title">Similarity</h4>
+                </div>
+                {similarityResult ? (
+                  <div className="model1-tools__distance">
+                    <div className="model1-tools__distance-pair">
+                      <span>{similarityResult.labelA}</span>
+                      <span>{similarityResult.labelB}</span>
+                    </div>
+                    <div className="model1-tools__distance-metric">
+                      <span>Cosine similarity</span>
+                      <strong>{similarityResult.cosineSimilarity.toFixed(4)}</strong>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="model1-tools__empty">
+                    Select two vectors and run Similarity.
+                  </div>
+                )}
+              </div>
+
+              <div className="model1-tools__results">
+                <div className="model1-tools__panel-header">
+                  <h4 className="model1-tools__panel-title">
+                    {selectedItems.length === 1
+                      ? `Nearest tokens to ${selectedItems[0].item.labelFull} (by cosine similarity)`
+                      : "Nearest tokens"}
+                  </h4>
                 </div>
                 {nearestTokens.length ? (
                   <ol className="model1-tools__list">

@@ -130,7 +130,7 @@ export async function getTokenMetadata(
 
 /**
  * Find nearest tokens for an arbitrary embedding vector.
- * Requires an ONNX exported with input `query_emb` (see prep/onnx/export_minilm_token_knn.py).
+ * Requires an ONNX exported with input `query_emb` (see prep/onnx/scripts/export_minilm_token_knn.py).
  */
 export async function mostSimilarTokensToVector(
   queryVector: Float32Array | number[],

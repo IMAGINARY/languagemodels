@@ -3,3 +3,9 @@ node_modules/
 .vite/
 public/models/
 public/transformers
+.venv
+src/models
+prep/onnx/.venv/
+prep/onnx/downloads/
+prep/onnx/build/
+prep/**/__pycache__/

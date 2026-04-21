@@ -47,6 +47,13 @@ body {
   margin: 0 auto;
 }
 
+.app__header-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -62,6 +69,81 @@ h1 {
 .subtitle {
   margin: 6px 0 0;
   color: var(--muted);
+}
+
+.language-menu {
+  position: relative;
+}
+
+.language-menu[open] .language-menu__trigger {
+  border-color: rgba(110, 231, 255, 0.45);
+  background: rgba(79, 70, 229, 0.16);
+}
+
+.language-menu__trigger {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(17, 19, 27, 0.86);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.language-menu__trigger:hover {
+  transform: translateY(-1px);
+}
+
+.language-menu__trigger::-webkit-details-marker {
+  display: none;
+}
+
+.language-menu__trigger img {
+  width: 18px;
+  height: 18px;
+}
+
+.language-menu__dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  background: rgba(14, 16, 21, 0.98);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  z-index: 10;
+}
+
+.language-menu__item {
+  appearance: none;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.language-menu__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.language-menu__item--active {
+  background: rgba(79, 70, 229, 0.24);
+  color: #dcecff;
 }
 
 .app__main {
@@ -515,6 +597,18 @@ h1 {
 }
 
 @media (max-width: 780px) {
+  .app__header-main {
+    align-items: stretch;
+  }
+
+  .brand {
+    align-items: flex-start;
+  }
+
+  .language-menu {
+    align-self: flex-start;
+  }
+
   .model1-workspace {
     grid-template-columns: 1fr;
   }

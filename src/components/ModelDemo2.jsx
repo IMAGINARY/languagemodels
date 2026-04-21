@@ -1,13 +1,15 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import AttentionArcs from "./AttentionArcs.jsx";
 import Embedding3D from "./Embedding3D.jsx";
 import { PCA as PCAClass } from "ml-pca";
 import { computeAttention } from "../utils/computeAttention.js";
 
-export default function ModelDemo2() {
-  const [text, setText] = useState("Transformers are really cool for embeddings!");
+export default function ModelDemo2({ language = "en" }) {
+  const { t } = useTranslation();
+  const [text, setText] = useState(() => t("model2.sampleText"));
   const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Idle");
+  const [message, setMessage] = useState(() => t("model2.statusIdle"));
   const [error, setError] = useState(null);
   const [tokens, setTokens] = useState(null); // string[]
   const [baseEmbeds, setBaseEmbeds] = useState(null); // Float32Array[] per token
@@ -18,12 +20,30 @@ export default function ModelDemo2() {
   const [numHeads, setNumHeads] = useState(0);
   const [attnSel, setAttnSel] = useState("none"); // 'none' | 'mean' | 'h1'..'hN'
 
+  useEffect(() => {
+    setText(t("model2.sampleText"));
+    setStatus("idle");
+    setMessage(t("model2.statusIdle"));
+    setError(null);
+    setTokens(null);
+    setBaseEmbeds(null);
+    setGroups(null);
+    setPcaModel(null);
+    setPoints3d([]);
+    setAttnMatrix(null);
+    setNumHeads(0);
+    setAttnSel("none");
+  }, [language, t]);
+
   async function handleTokenize() {
     try {
       setError(null);
       setStatus("running");
-      setMessage("Tokenizing + embeddings …");
-      const { tokens, embeddings, numHeads } = await computeAttention(text, { head: "none" });
+      setMessage(t("model2.statusRunning"));
+      const { tokens, embeddings, numHeads } = await computeAttention(text, {
+        language,
+        head: "none",
+      });
       setTokens(tokens);
       setBaseEmbeds(embeddings);
       setNumHeads(numHeads || 0);
@@ -110,12 +130,12 @@ export default function ModelDemo2() {
       setPoints3d(pts);
 
       setStatus("ready");
-      setMessage("Done");
+      setMessage(t("model2.statusDone"));
     } catch (e) {
       console.error(e);
       setStatus("error");
-      setMessage(e?.message || "Failed");
-      setError("Failed to compute attention. See console.");
+      setMessage(e?.message || t("model2.statusFailed"));
+      setError(t("model2.errorAttentionFailed"));
     }
   }
 
@@ -146,7 +166,7 @@ export default function ModelDemo2() {
     // Fetch attention for selected head/mean
     const head = sel === "mean" ? "mean" : Number(sel.replace(/^h/, ""));
     try {
-      const { attention } = await computeAttention(text, { head });
+      const { attention } = await computeAttention(text, { language, head });
       setAttnMatrix(attention);
       // Create contextualized token embeddings: E' = A * E
       const T = tokens.length;
@@ -197,22 +217,22 @@ export default function ModelDemo2() {
           rows={4}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Type some text…"
+          placeholder={t("model2.inputPlaceholder")}
         />
       </div>
 
       <div className="row row--actions">
         <button className="btn btn--primary" onClick={handleTokenize} disabled={status === "running"}>
-          {status === "running" ? "Working…" : "Tokenization"}
+          {status === "running" ? t("model2.working") : t("model2.tokenize")}
         </button>
         {tokens && (
           <>
-            <label htmlFor="attn-sel" style={{ marginLeft: 12, color: "#a0a7b5" }}>Attention:</label>
+            <label htmlFor="attn-sel" style={{ marginLeft: 12, color: "#a0a7b5" }}>{t("model2.attention")}</label>
             <select id="attn-sel" className="input" style={{ width: 200, marginLeft: 6 }} value={attnSel} onChange={(e) => handleAttentionChange(e.target.value)}>
-              <option value="none">None</option>
-              <option value="mean">Mean</option>
+              <option value="none">{t("model2.none")}</option>
+              <option value="mean">{t("model2.mean")}</option>
               {Array.from({ length: numHeads || 0 }, (_, i) => (
-                <option key={i} value={`h${i}`}>{`Head ${i + 1}`}</option>
+                <option key={i} value={`h${i}`}>{t("model2.head", { count: i + 1 })}</option>
               ))}
             </select>
           </>
@@ -225,7 +245,7 @@ export default function ModelDemo2() {
       {tokens && attnMatrix && (
         <div className="result">
           <div className="result__preview">
-            <strong>Tokens + attention:</strong>
+            <strong>{t("model2.tokensAttention")}</strong>
             <AttentionArcs tokens={tokens} attnMatrix={attnMatrix} />
           </div>
         </div>
@@ -237,7 +257,7 @@ export default function ModelDemo2() {
             points={points3d}
             width={640}
             height={360}
-            title="Token Attention Rows — PCA (3D)"
+            title={t("model2.projectionTitle")}
           />
         </div>
       )}

@@ -1,4 +1,13 @@
-import { AutoTokenizer, AutoModel, Tensor } from "@huggingface/transformers";
+import { AutoTokenizer, AutoModel, Tensor, env } from "@huggingface/transformers";
+import { getAttentionModelConfig, resolveLanguage } from "./modelRegistry.js";
+
+const tokenizerCache = new Map();
+const modelCache = new Map();
+const LOCAL_MODEL_BASE = `${import.meta.env.BASE_URL}models/i18n_attention/`;
+
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.localModelPath = LOCAL_MODEL_BASE;
 
 function headMean(t /* [1,H,T,T] */) {
   const [B, H, T, S] = t.dims;
@@ -60,17 +69,35 @@ function layerMean(mats /* Array<[T,T]> */) {
 export async function computeAttention(
   sentence = "The quick brown fox jumps over the lazy dog.",
   {
-    modelId = "bradynapier/all_miniLM_L6_v2_with_attentions_onnx",
+    language = "en",
     layer = "last", // 0..L-1, 'last', or 'mean'
     head = "mean", // 0..H-1, 'mean', or 'none'
   } = {}
 ) {
-  const tokenizer = await AutoTokenizer.from_pretrained(modelId);
-  const model = await AutoModel.from_pretrained(modelId, {
-    dtype: "fp32",
-    quantized: false,
-    model_file_name: "model", // ensures onnx/model.onnx
-  });
+  const resolvedLanguage = resolveLanguage(language);
+  const { localModelId } = getAttentionModelConfig(resolvedLanguage);
+
+  let tokenizerPromise = tokenizerCache.get(localModelId);
+  if (!tokenizerPromise) {
+    tokenizerPromise = AutoTokenizer.from_pretrained(localModelId, {
+      local_files_only: true,
+    });
+    tokenizerCache.set(localModelId, tokenizerPromise);
+  }
+
+  let modelPromise = modelCache.get(localModelId);
+  if (!modelPromise) {
+    modelPromise = AutoModel.from_pretrained(localModelId, {
+      local_files_only: true,
+      dtype: "fp32",
+      quantized: false,
+      model_file_name: "model",
+      subfolder: "onnx",
+    });
+    modelCache.set(localModelId, modelPromise);
+  }
+
+  const [tokenizer, model] = await Promise.all([tokenizerPromise, modelPromise]);
 
   const enc = await tokenizer(sentence, { return_tensors: "pt" });
   const T = enc.input_ids.dims[1];
@@ -91,13 +118,15 @@ export async function computeAttention(
   // Collect attentions as array of tensors [1,H,T,T]
   const attentions = Array.isArray(out.attentions)
     ? out.attentions
-    : Object.keys(out)
-        .filter((k) => /^attention_\d+$/i.test(k))
-        .sort(
-          (a, b) =>
-            parseInt(a.split("_")[1], 10) - parseInt(b.split("_")[1], 10)
-        )
-        .map((k) => out[k]);
+    : out.last_attention
+      ? [out.last_attention]
+      : Object.keys(out)
+          .filter((k) => /^attention_\d+$/i.test(k))
+          .sort(
+            (a, b) =>
+              parseInt(a.split("_")[1], 10) - parseInt(b.split("_")[1], 10)
+          )
+          .map((k) => out[k]);
 
   if (!attentions?.length) {
     if (head === "none") {

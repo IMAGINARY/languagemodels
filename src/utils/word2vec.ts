@@ -1,16 +1,15 @@
 import * as ort from "onnxruntime-web";
-import vocab from "../models/word2vec_vocab.json";
+import { getWord2VecModelConfig, resolveLanguage } from "./modelRegistry.js";
 
-const EMBED_ONNX_URL = new URL("../models/word2vec_embed.onnx", import.meta.url)
-  .href;
-const VECTOR_KNN_URL = new URL(
-  "../models/word2vec_vector_knn.onnx",
-  import.meta.url
-).href;
+type Word2VecRuntimeState = {
+  embedSession: ort.InferenceSession | null;
+  knnSession: ort.InferenceSession | null;
+  tokenToId: Map<string, number>;
+  vocab: string[];
+  vocabPromise: Promise<string[]> | null;
+};
 
-const tokenToId = new Map(vocab.map((token, index) => [token, index]));
-let embedSession: ort.InferenceSession | null = null;
-let knnSession: ort.InferenceSession | null = null;
+const runtimeStateByLanguage = new Map<string, Word2VecRuntimeState>();
 const EPS = 1e-8;
 
 const epPromise: Promise<ort.InferenceSession.SessionOptions> = (async () => {
@@ -36,6 +35,50 @@ function createRunLock() {
 
 const runEmbedLocked = createRunLock();
 const runKnnLocked = createRunLock();
+
+function getRuntimeState(language: string): Word2VecRuntimeState {
+  const resolvedLanguage = resolveLanguage(language);
+  let state = runtimeStateByLanguage.get(resolvedLanguage);
+  if (!state) {
+    state = {
+      embedSession: null,
+      knnSession: null,
+      tokenToId: new Map(),
+      vocab: [],
+      vocabPromise: null,
+    };
+    runtimeStateByLanguage.set(resolvedLanguage, state);
+  }
+  return state;
+}
+
+async function loadVocab(language = "en") {
+  const resolvedLanguage = resolveLanguage(language);
+  const state = getRuntimeState(resolvedLanguage);
+  if (!state.vocabPromise) {
+    const { vocabUrl } = getWord2VecModelConfig(resolvedLanguage);
+    state.vocabPromise = fetch(vocabUrl)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load ${resolvedLanguage} word2vec vocabulary.`
+          );
+        }
+        return response.json();
+      })
+      .then((vocab) => {
+        if (!Array.isArray(vocab)) {
+          throw new Error("Word2Vec vocabulary has an invalid format.");
+        }
+        state.vocab = vocab;
+        state.tokenToId = new Map(
+          vocab.map((token, index) => [String(token), index])
+        );
+        return state.vocab;
+      });
+  }
+  return state.vocabPromise;
+}
 
 function dot(a: Float32Array | number[], b: Float32Array | number[]) {
   let sum = 0;
@@ -65,40 +108,48 @@ function toFloatTensor(vec: Float32Array | number[]) {
   return new ort.Tensor("float32", arr, [1, arr.length]);
 }
 
-export function getWord2VecTokenMetadata(token: string) {
-  const tokenId = tokenToId.get(token);
+export function getWord2VecTokenMetadata(token: string, language = "en") {
+  const state = getRuntimeState(language);
+  const tokenId = state.tokenToId.get(token);
   if (typeof tokenId === "number") {
     return { tokenId, singleToken: true };
   }
   return { tokenId: undefined, singleToken: false };
 }
 
-export async function ensureWord2VecSessions() {
-  if (!embedSession) {
-    embedSession = await ort.InferenceSession.create(
-      EMBED_ONNX_URL,
+export async function ensureWord2VecSessions(language = "en") {
+  const resolvedLanguage = resolveLanguage(language);
+  const state = getRuntimeState(resolvedLanguage);
+  const { embedUrl, vectorKnnUrl } = getWord2VecModelConfig(resolvedLanguage);
+
+  await loadVocab(resolvedLanguage);
+
+  if (!state.embedSession) {
+    state.embedSession = await ort.InferenceSession.create(
+      embedUrl,
       await epPromise
     );
   }
-  if (!knnSession) {
-    knnSession = await ort.InferenceSession.create(
-      VECTOR_KNN_URL,
+  if (!state.knnSession) {
+    state.knnSession = await ort.InferenceSession.create(
+      vectorKnnUrl,
       await epPromise
     );
   }
 }
 
-export async function embedWord2VecToken(token: string) {
-  const { tokenId } = getWord2VecTokenMetadata(token);
+export async function embedWord2VecToken(token: string, language = "en") {
+  await ensureWord2VecSessions(language);
+  const state = getRuntimeState(language);
+  const { tokenId } = getWord2VecTokenMetadata(token, language);
   if (typeof tokenId !== "number") {
     throw new Error(
       `Token "${token}" is not in the word2vec vocabulary. Try a different token.`
     );
   }
 
-  await ensureWord2VecSessions();
   const output = await runEmbedLocked(() =>
-    embedSession!.run({ token_id: toInt64Tensor(tokenId) })
+    state.embedSession!.run({ token_id: toInt64Tensor(tokenId) })
   );
   const embedding = output.embedding?.data;
   if (!embedding) {
@@ -112,18 +163,23 @@ export async function embedWord2VecToken(token: string) {
   };
 }
 
-export async function mostSimilarWord2VecTokensToTokenId(tokenId: number) {
-  await ensureWord2VecSessions();
-  const embedding = await embedWord2VecTokenById(tokenId);
+export async function mostSimilarWord2VecTokensToTokenId(
+  tokenId: number,
+  language = "en"
+) {
+  await ensureWord2VecSessions(language);
+  const state = getRuntimeState(language);
+  const embedding = await embedWord2VecTokenById(tokenId, language);
   const results = await runKnnLocked(() =>
-    knnSession!.run({ query_emb: toFloatTensor(embedding) })
+    state.knnSession!.run({ query_emb: toFloatTensor(embedding) })
   );
-  return mapKnnResults(results);
+  return mapKnnResults(results, language);
 }
 
-async function embedWord2VecTokenById(tokenId: number) {
+async function embedWord2VecTokenById(tokenId: number, language = "en") {
+  const state = getRuntimeState(language);
   const output = await runEmbedLocked(() =>
-    embedSession!.run({ token_id: toInt64Tensor(tokenId) })
+    state.embedSession!.run({ token_id: toInt64Tensor(tokenId) })
   );
   const embedding = output.embedding?.data;
   if (!embedding) {
@@ -133,17 +189,20 @@ async function embedWord2VecTokenById(tokenId: number) {
 }
 
 export async function mostSimilarWord2VecTokensToVector(
-  queryVector: Float32Array | number[]
+  queryVector: Float32Array | number[],
+  language = "en"
 ) {
-  await ensureWord2VecSessions();
+  await ensureWord2VecSessions(language);
+  const state = getRuntimeState(language);
   const normalized = normalize(queryVector) ?? Float32Array.from(queryVector);
   const results = await runKnnLocked(() =>
-    knnSession!.run({ query_emb: toFloatTensor(normalized) })
+    state.knnSession!.run({ query_emb: toFloatTensor(normalized) })
   );
-  return mapKnnResults(results);
+  return mapKnnResults(results, language);
 }
 
-function mapKnnResults(results: Record<string, ort.Tensor>) {
+function mapKnnResults(results: Record<string, ort.Tensor>, language = "en") {
+  const state = getRuntimeState(language);
   const topIdx = Array.from(
     (results.top_indices?.data as BigInt64Array | undefined) ?? []
   );
@@ -155,7 +214,7 @@ function mapKnnResults(results: Record<string, ort.Tensor>) {
     const numericId = Number(id);
     return {
       id: numericId,
-      token: vocab[numericId] ?? `#${numericId}`,
+      token: state.vocab[numericId] ?? `#${numericId}`,
       score: topScores[index] ?? 0,
     };
   });

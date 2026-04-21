@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import Embedding3DUI from "./Embedding3DUI.jsx";
 import {
   embedWord2VecToken,
@@ -42,9 +43,10 @@ function hasSelectionChanged(previousItems, nextItems) {
   });
 }
 
-export default function ModelDemo() {
+export default function ModelDemo({ language = "en" }) {
+  const { t } = useTranslation();
   const [status, setStatus] = useState("idle");
-  const [message, setMessage] = useState("Loading model ...");
+  const [message, setMessage] = useState(() => t("model1.statusLoadingModel"));
   const [error, setError] = useState(null);
   const [text, setText] = useState("");
   const [dataset, setDataset] = useState([]); // {labelFull, labelVec, tokenId, singleToken, vector}
@@ -73,18 +75,18 @@ export default function ModelDemo() {
     try {
       setError(null);
       setStatus("loading");
-      setMessage("Loading word2vec ONNX...");
-      await ensureWord2VecSessions();
+      setMessage(t("model1.statusLoadingOnnx"));
+      await ensureWord2VecSessions(language);
 
       setStatus("ready");
-      setMessage("Model ready");
+      setMessage(t("model1.statusModelReady"));
     } catch (e) {
       console.error(e);
       setStatus("error");
-      setError("Failed to load model.");
-      setMessage("Model failed to load");
+      setError(t("model1.errorLoadModel"));
+      setMessage(t("model1.statusModelFailed"));
     }
-  }, []);
+  }, [language, t]);
 
   useEffect(() => {
     loadModel();
@@ -93,6 +95,25 @@ export default function ModelDemo() {
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    setMessage(t("model1.statusLoadingModel"));
+  }, [t]);
+
+  useEffect(() => {
+    setDataset([]);
+    setSelectedItems([]);
+    setAutoSelectIndexes(null);
+    setPreserveToolOnNextSelectionChange(false);
+    setNearestTokens([]);
+    setNeighborSourceLabel("");
+    setSimilarityResult(null);
+    setAnalogyResult(null);
+    setActiveTool(null);
+    setRunningTool(null);
+    setToolError(null);
+    setText("");
+  }, [language]);
 
   const resetToolPanels = useCallback(() => {
     setActiveTool(null);
@@ -119,9 +140,12 @@ export default function ModelDemo() {
       setError(null);
       resetToolPanels();
       setStatus("running");
-      setMessage("Embedding token...");
+      setMessage(t("model1.statusEmbeddingToken"));
 
-      const { tokenId, singleToken, vector } = await embedWord2VecToken(trimmedText);
+      const { tokenId, singleToken, vector } = await embedWord2VecToken(
+        trimmedText,
+        language
+      );
       appendUniqueDatasetItems([
         {
           labelFull: trimmedText,
@@ -135,14 +159,18 @@ export default function ModelDemo() {
       textareaRef.current?.focus();
 
       setStatus("ready");
-      setMessage("Embedding added");
+      setMessage(t("model1.statusEmbeddingAdded"));
     } catch (e) {
       console.error(e);
       setStatus("error");
-      setError(e.message || "Failed to compute embedding.");
-      setMessage("Embedding failed");
+      setError(
+        e.message?.includes("is not in the word2vec vocabulary")
+          ? t("model1.errorMissingToken", { token: trimmedText })
+          : e.message || t("model1.errorEmbeddingFailed")
+      );
+      setMessage(t("model1.statusEmbeddingFailed"));
     }
-  }, [appendUniqueDatasetItems, resetToolPanels, trimmedText]);
+  }, [appendUniqueDatasetItems, language, resetToolPanels, t, trimmedText]);
 
   const clearDataset = useCallback(() => {
     setDataset([]);
@@ -169,7 +197,7 @@ export default function ModelDemo() {
     setToolError(null);
 
     if (selectedItems.length !== 1) {
-      setToolError("Select exactly one vector to find nearest tokens.");
+      setToolError(t("model1.errorNeighborsSelection"));
       setRunningTool(null);
       return;
     }
@@ -181,18 +209,24 @@ export default function ModelDemo() {
 
       if (sourceItem.singleToken && typeof sourceItem.tokenId === "number") {
         const raw = await mostSimilarWord2VecTokensToTokenId(
-          sourceItem.tokenId
+          sourceItem.tokenId,
+          language
         );
         neighbors = raw.slice(1, 6);
       } else {
-        neighbors = (await mostSimilarWord2VecTokensToVector(queryVector)).slice(0, 5);
+        neighbors = (
+          await mostSimilarWord2VecTokensToVector(queryVector, language)
+        ).slice(0, 5);
       }
 
       const neighborVectors = await Promise.all(
         neighbors.map(async (neighbor) => {
           const labelFull = neighbor.token;
-          const { tokenId, singleToken } = getWord2VecTokenMetadata(labelFull);
-          const { vector } = await embedWord2VecToken(labelFull);
+          const { tokenId, singleToken } = getWord2VecTokenMetadata(
+            labelFull,
+            language
+          );
+          const { vector } = await embedWord2VecToken(labelFull, language);
           return {
             labelFull,
             labelVec: labelFull.slice(0, 40) || neighbor.token,
@@ -208,11 +242,11 @@ export default function ModelDemo() {
       appendUniqueDatasetItems(neighborVectors);
     } catch (e) {
       console.error(e);
-      setToolError(e.message || "Failed to find nearest tokens.");
+      setToolError(e.message || t("model1.errorNeighborsFailed"));
     } finally {
       setRunningTool(null);
     }
-  }, [appendUniqueDatasetItems, selectedItems]);
+  }, [appendUniqueDatasetItems, language, selectedItems, t]);
 
   const handleSimilarity = useCallback(() => {
     setActiveTool("similarity");
@@ -220,7 +254,7 @@ export default function ModelDemo() {
     setToolError(null);
 
     if (selectedItems.length !== 2) {
-      setToolError("Select exactly two vectors to compute cosine similarity.");
+      setToolError(t("model1.errorSimilaritySelection"));
       setRunningTool(null);
       return;
     }
@@ -242,11 +276,11 @@ export default function ModelDemo() {
       });
     } catch (e) {
       console.error(e);
-      setToolError("Failed to compute cosine similarity.");
+      setToolError(t("model1.errorSimilarityFailed"));
     } finally {
       setRunningTool(null);
     }
-  }, [selectedItems]);
+  }, [selectedItems, t]);
 
   const handleAnalogy = useCallback(() => {
     setActiveTool("analogy");
@@ -254,7 +288,7 @@ export default function ModelDemo() {
     setToolError(null);
 
     if (selectedItems.length !== 3) {
-      setToolError("Select exactly three vectors to compute an analogy.");
+      setToolError(t("model1.errorAnalogySelection"));
       setRunningTool(null);
       return;
     }
@@ -295,11 +329,11 @@ export default function ModelDemo() {
       });
     } catch (e) {
       console.error(e);
-      setToolError("Failed to compute analogy.");
+      setToolError(t("model1.errorAnalogyFailed"));
     } finally {
       setRunningTool(null);
     }
-  }, [appendUniqueDatasetItems, dataset.length, selectedItems]);
+  }, [appendUniqueDatasetItems, dataset.length, selectedItems, t]);
 
   const handleTextareaKeyDown = useCallback(
     (event) => {
@@ -342,7 +376,7 @@ export default function ModelDemo() {
             <button
               type="button"
               className="model1-tool__close"
-              aria-label={`Close ${toolName} output`}
+              aria-label={t("model1.closeToolOutput", { tool: toolName })}
               onClick={resetToolPanels}
             >
               ×
@@ -350,7 +384,7 @@ export default function ModelDemo() {
           ) : null}
           <div className="model1-tool__panel-body">
             {isRunning ? (
-              <div className="model1-tools__empty">Running tool...</div>
+              <div className="model1-tools__empty">{t("model1.runningTool")}</div>
             ) : isActive ? (
               toolError ? <div className="alert alert--error">{toolError}</div> : content.output
             ) : (
@@ -372,7 +406,7 @@ export default function ModelDemo() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleTextareaKeyDown}
-          placeholder="Type a token to embed..."
+          placeholder={t("model1.inputPlaceholder")}
         />
       </div>
 
@@ -382,7 +416,7 @@ export default function ModelDemo() {
           onClick={runEmbedding}
           disabled={!canRun}
         >
-          {status === "running" ? "Running…" : "Embed"}
+          {status === "running" ? t("model1.running") : t("model1.embed")}
         </button>
         <span className={`status status--${status}`}>{message}</span>
       </div>
@@ -411,21 +445,21 @@ export default function ModelDemo() {
                 }}
                 selectedIndexesExternal={autoSelectIndexes}
                 height={420}
-                title="Embedding Projection"
+                title={t("model1.projectionTitle")}
               />
             </div>
 
             <aside className="model1-tools">
               <div className="model1-tools__header">
-                <h3 className="model1-tools__title">Tools</h3>
+                <h3 className="model1-tools__title">{t("model1.tools")}</h3>
                 <p className="model1-tools__subtitle">
                   {selectedItems.length
-                    ? `${selectedItems.length} selected`
-                    : "No vectors selected"}
+                    ? t("model1.selectedCount", { count: selectedItems.length })
+                    : t("model1.noVectorsSelected")}
                 </p>
               </div>
 
-              {renderToolOutput("vector", "Select 1 token", {
+              {renderToolOutput("vector", t("model1.selectOneToken"), {
                 button: (
                   <button
                     type="button"
@@ -437,17 +471,17 @@ export default function ModelDemo() {
                     }}
                     disabled={runningTool !== null || selectedItems.length !== 1}
                   >
-                    Vector
+                    {t("model1.vector")}
                   </button>
                 ),
                 output: selectedVectorItem ? (
                   <div className="model1-tools__vector">
                     <div className="model1-tools__vector-row">
-                      <span className="model1-tools__vector-label">Dimension:</span>
+                      <span className="model1-tools__vector-label">{t("model1.dimension")}</span>
                       <strong>{selectedVectorItem.vector.length}</strong>
                     </div>
                     <div className="model1-tools__vector-block">
-                      <span className="model1-tools__vector-label">Vector:</span>
+                      <span className="model1-tools__vector-label">{t("model1.vectorLabel")}</span>
                       <code className="model1-tools__vector-code">
                         [
                         {Array.from(selectedVectorItem.vector).map((value, index) => (
@@ -462,12 +496,12 @@ export default function ModelDemo() {
                   </div>
                 ) : (
                   <div className="model1-tools__empty">
-                    No vector selected.
+                    {t("model1.noVectorSelected")}
                   </div>
                 ),
               })}
 
-              {renderToolOutput("neighbors", "Select 1 token", {
+              {renderToolOutput("neighbors", t("model1.selectOneToken"), {
                 button: (
                   <button
                     type="button"
@@ -475,13 +509,13 @@ export default function ModelDemo() {
                     onClick={handleFindNearestTokens}
                     disabled={runningTool !== null || selectedItems.length !== 1}
                   >
-                    {runningTool === "neighbors" ? "Working..." : "Neighbors"}
+                    {runningTool === "neighbors" ? t("model1.working") : t("model1.neighbors")}
                   </button>
                 ),
                 output: nearestTokens.length ? (
                   <div className="model1-tool__content">
                     <div className="model1-tool__text">
-                      Nearest tokens to {neighborSourceLabel}:
+                      {t("model1.nearestTokensTo", { label: neighborSourceLabel })}
                     </div>
                     <ol className="model1-tools__list">
                       {nearestTokens.map((item) => (
@@ -494,12 +528,12 @@ export default function ModelDemo() {
                   </div>
                 ) : (
                   <div className="model1-tools__empty">
-                    No neighbor result available.
+                    {t("model1.noNeighborResult")}
                   </div>
                 ),
               })}
 
-              {renderToolOutput("similarity", "Select 2 tokens", {
+              {renderToolOutput("similarity", t("model1.selectTwoTokens"), {
                 button: (
                   <button
                     type="button"
@@ -507,7 +541,7 @@ export default function ModelDemo() {
                     onClick={handleSimilarity}
                     disabled={runningTool !== null || selectedItems.length !== 2}
                   >
-                    {runningTool === "similarity" ? "Working..." : "Similarity"}
+                    {runningTool === "similarity" ? t("model1.working") : t("model1.similarity")}
                   </button>
                 ),
                 output: similarityResult ? (
@@ -517,18 +551,18 @@ export default function ModelDemo() {
                       <span>{similarityResult.labelB}</span>
                     </div>
                     <div className="model1-tools__distance-metric">
-                      <span>Cosine similarity</span>
+                      <span>{t("model1.cosineSimilarity")}</span>
                       <strong>{similarityResult.cosineSimilarity.toFixed(4)}</strong>
                     </div>
                   </div>
                 ) : (
                   <div className="model1-tools__empty">
-                    No similarity result available.
+                    {t("model1.noSimilarityResult")}
                   </div>
                 ),
               })}
 
-              {renderToolOutput("analogy", "Select 3 tokens", {
+              {renderToolOutput("analogy", t("model1.selectThreeTokens"), {
                 button: (
                   <button
                     type="button"
@@ -536,18 +570,22 @@ export default function ModelDemo() {
                     onClick={handleAnalogy}
                     disabled={runningTool !== null || selectedItems.length !== 3}
                   >
-                    {runningTool === "analogy" ? "Working..." : "Analogy"}
+                    {runningTool === "analogy" ? t("model1.working") : t("model1.analogy")}
                   </button>
                 ),
                 output: analogyResult ? (
                   <div className="model1-tool__content">
                     <div className="model1-tool__text">
-                      Computed the vector {analogyResult.labelA} - {analogyResult.labelB} + {analogyResult.labelC} as the aritmetic sum and difference of their embedding vectors. Now you can find the closest neighbors to this vector.
+                      {t("model1.analogyExplanation", {
+                        labelA: analogyResult.labelA,
+                        labelB: analogyResult.labelB,
+                        labelC: analogyResult.labelC,
+                      })}
                     </div>
                   </div>
                 ) : (
                   <div className="model1-tools__empty">
-                    No analogy result available.
+                    {t("model1.noAnalogyResult")}
                   </div>
                 ),
               })}
